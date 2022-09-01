@@ -22,6 +22,8 @@ pub struct PPU {
 
     // nmi enabled 0: off 1: on
     nmi_enabled: bool,  
+    // nmi occurred status
+    nmi_occurred: bool,
     // vram address increment 0: add 1  1: add 32
     vram_increment: u16,
     // sprite szie 0: 8x8 1: 8x16
@@ -44,7 +46,7 @@ pub struct PPU {
     // status
     sprite_overflow: bool,
     sprite_0_hit: bool,
-    vblank_started: bool,
+
 
     // frame number
     frame_number: u32,
@@ -53,7 +55,7 @@ pub struct PPU {
     // oam data
     oam_data: u8,
     // vram data read buffer
-    vram_data: u8,
+    vram_read_buffer: u8,
     x: u16,
     y: u16,
     // toggle for 2x write
