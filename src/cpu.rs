@@ -49,7 +49,7 @@ pub struct CPU {
 
 
 impl CPU {
-    //
+    // new cpu
     pub fn new(bus: CPUBus) -> Self {
         Self {
             bus: bus,
@@ -59,8 +59,16 @@ impl CPU {
 
     // common ops
 
+    fn mem_read_u8(&mut self, addr: u16) -> u8 {
+        self.bus.read_u8(addr)
+    }
+
+    fn mem_write_u8(&mut self, addr: u16, val: u8) {
+        self.cycles_delay += self.bus.write_u8(addr, val)
+    }
+
     fn push_u8(&mut self, val: u8) {
-        self.bus.write_u8(self.regs.sp as u16 + STACK_BASE, val);
+        self.mem_write_u8(self.regs.sp as u16 + STACK_BASE, val);
         self.regs.sp = self.regs.sp.wrapping_sub(1);
     }
 
@@ -73,7 +81,7 @@ impl CPU {
 
     fn pop_u8(&mut self) -> u8 {
         self.regs.sp = self.regs.sp.wrapping_add(1);
-        self.bus.read_u8(self.regs.sp as u16 + STACK_BASE)
+        self.mem_read_u8(self.regs.sp as u16 + STACK_BASE)
     }
 
     fn pop_u16(&mut self) -> u16 {
@@ -82,15 +90,15 @@ impl CPU {
         (h as u16) << 8 | l as u16
     }
 
-    fn fetch1(&mut self) -> u8 {
-        let d = self.bus.read_u8(self.regs.pc);
+    fn fetch_u8(&mut self) -> u8 {
+        let d = self.mem_read_u8(self.regs.pc);
         self.regs.pc = self.regs.pc.wrapping_add(1);
         d
     }
 
-    fn fetch2(&mut self) -> u16 {
-        let l = self.fetch1();
-        let h = self.fetch1();
+    fn fetch_u16(&mut self) -> u16 {
+        let l = self.fetch_u8();
+        let h = self.fetch_u8();
         (h as u16) << 8 | l as u16 
     }
 
@@ -112,75 +120,75 @@ impl CPU {
 
     fn immediate(&mut self) -> u8 {
         self.op_addr = 0xffff;
-        self.op_val = self.fetch1();
+        self.op_val = self.fetch_u8();
         self.op_val
     }
 
     fn zero_page(&mut self) -> u8 {
-        self.op_addr = u16::from(self.fetch1() & 0xff);
-        self.op_val = self.bus.read_u8(self.op_addr);
+        self.op_addr = u16::from(self.fetch_u8() & 0xff);
+        self.op_val = self.mem_read_u8(self.op_addr);
         self.op_val
     }
 
     fn zero_page_x(&mut self) -> u8 {
         // load operand
-        let d = self.fetch1();
+        let d = self.fetch_u8();
         self.op_addr = (d.wrapping_add(self.regs.x) & 0xFF).into();
-        self.op_val = self.bus.read_u8(self.op_addr);
+        self.op_val = self.mem_read_u8(self.op_addr);
         self.op_val
     }
 
     fn zero_page_y(&mut self) -> u8 {
         // load operand
-        let d = self.fetch1();
+        let d = self.fetch_u8();
         self.op_addr = (d.wrapping_add(self.regs.y) & 0xFF).into();
-        self.op_val = self.bus.read_u8(self.op_addr);
+        self.op_val = self.mem_read_u8(self.op_addr);
         self.op_val
     }
 
     fn absolute(&mut self) -> u8 {
-        self.op_addr = self.fetch2();
-        self.op_val = self.bus.read_u8(self.op_addr);
+        self.op_addr = self.fetch_u16();
+        self.op_val = self.mem_read_u8(self.op_addr);
         self.op_val
     }
 
     fn absolute_x(&mut self) -> u8 {
-        let d = self.fetch2();
+        let d = self.fetch_u16();
         self.op_addr = d.wrapping_add(self.regs.x as u16);
         self.handle_cross_page(self.op_addr, d);
-        self.op_val = self.bus.read_u8(self.op_addr);
+        self.op_val = self.mem_read_u8(self.op_addr);
         self.op_val
     }
 
     fn absolute_y(&mut self) -> u8 {
-        let d = self.fetch2();
+        let d = self.fetch_u16();
         self.op_addr = d.wrapping_add(self.regs.y as u16);
         self.handle_cross_page(self.op_addr, d);
-        self.op_val = self.bus.read_u8(self.op_addr);
+        self.op_val = self.mem_read_u8(self.op_addr);
         self.op_val
     }
 
     fn indirect_x(&mut self) -> u8 {
-        let d = self.fetch1();
-        let l = self.bus.read_u8(d.wrapping_add(self.regs.x).into());
-        let h = self.bus.read_u8(d.wrapping_add(self.regs.x).wrapping_add(1).into());
+        let d = self.fetch_u8();
+        let l = self.mem_read_u8(d.wrapping_add(self.regs.x).into());
+        let h = self.mem_read_u8(d.wrapping_add(self.regs.x).wrapping_add(1).into());
         self.op_addr = (h as u16) << 8 | (l as u16);
-        self.op_val = self.bus.read_u8(self.op_addr);
+        self.op_val = self.mem_read_u8(self.op_addr);
         self.op_val
     }
 
     fn indirect_y(&mut self) -> u8 {
-        let d = self.fetch1();
-        let l = self.bus.read_u8(d.into());
-        let h = self.bus.read_u8(d.wrapping_add(1).into());
+        let d = self.fetch_u8();
+        let l = self.mem_read_u8(d.into());
+        let h = self.mem_read_u8(d.wrapping_add(1).into());
         self.op_addr = ((h as u16) << 8 | l as u16).wrapping_add(u16::from(self.regs.y));
         self.handle_cross_page(self.op_addr, (h as u16) << 8 | l as u16);
-        self.op_val = self.bus.read_u8(self.op_addr);
+        self.op_val = self.mem_read_u8(self.op_addr);
         self.op_val
     }
 
     fn relative(&mut self) -> u8 {
-        let d = self.fetch1();
+        let d = self.fetch_u8();
         let rel: u16 = (d as i8) as u16;
         let base = self.regs.pc.wrapping_sub(1);
         self.op_addr = base.wrapping_add(rel);
@@ -189,7 +197,7 @@ impl CPU {
     }
 
     fn indirect(&mut self) -> u8 {
-        self.op_addr = self.fetch2();
+        self.op_addr = self.fetch_u16();
         self.op_addr = self.bus.read_u16(self.op_addr);
         0
     }
@@ -224,15 +232,15 @@ impl CPU {
     }
 
     fn sta(&mut self) {
-        self.bus.write_u8(self.op_addr, self.regs.acc);
+        self.mem_write_u8(self.op_addr, self.regs.acc);
     }
 
     fn stx(&mut self) {
-        self.bus.write_u8(self.op_addr, self.regs.x);
+        self.mem_write_u8(self.op_addr, self.regs.x);
     }
 
     fn sty(&mut self) {
-        self.bus.write_u8(self.op_addr, self.regs.y);
+        self.mem_write_u8(self.op_addr, self.regs.y);
     }
 
     fn tax(&mut self) {
@@ -290,7 +298,7 @@ impl CPU {
 
     fn dec(&mut self) {
         self.op_val = self.op_val.wrapping_sub(1);
-        self.bus.write_u8(self.op_addr, self.op_val);
+        self.mem_write_u8(self.op_addr, self.op_val);
         self.flag_nz(self.op_val);
     }
 
@@ -306,7 +314,7 @@ impl CPU {
 
     fn inc(&mut self) {
         self.op_val = self.op_val.wrapping_add(1);
-        self.bus.write_u8(self.op_addr, self.op_val);
+        self.mem_write_u8(self.op_addr, self.op_val);
         self.flag_nz(self.op_val);
     }
 
@@ -366,7 +374,7 @@ impl CPU {
             _ => self.regs.status |= STATUS_CARRAY,
         }
         self.op_val = self.op_val << 1;
-        self.bus.write_u8(self.op_addr, self.op_val);
+        self.mem_write_u8(self.op_addr, self.op_val);
         self.flag_nz(self.op_val);
     }
 
@@ -385,7 +393,7 @@ impl CPU {
             _ => self.regs.status |= STATUS_CARRAY,
         }
         self.op_val = self.op_val >> 1;
-        self.bus.write_u8(self.op_addr, self.op_val);
+        self.mem_write_u8(self.op_addr, self.op_val);
         self.flag_nz(self.op_val);
     }
 
@@ -405,7 +413,7 @@ impl CPU {
             _ => self.regs.status |= STATUS_CARRAY,
         }
         self.op_val = (self.op_val << 1).wrapping_add(old);
-        self.bus.write_u8(self.op_addr, self.op_val);
+        self.mem_write_u8(self.op_addr, self.op_val);
         self.flag_nz(self.op_val)
     }
 
@@ -427,7 +435,7 @@ impl CPU {
             _ => self.regs.status |= STATUS_CARRAY,
         }
         self.op_val = (self.op_val >> 1).wrapping_add(old);
-        self.bus.write_u8(self.op_addr, self.op_val);
+        self.mem_write_u8(self.op_addr, self.op_val);
         self.flag_nz(self.op_val)
     }
 
@@ -606,7 +614,7 @@ impl CPU {
 
     fn brk(&mut self) {
         // read next instruction byte (and throw it away)
-        self.fetch1();
+        self.fetch_u8();
         // set I flag
         let status = self.regs.status | STATUS_INTERUPT | STATUS_B1 | STATUS_B2;
         self.push_u16(self.regs.pc);
@@ -667,7 +675,7 @@ impl CPU {
             // handle interupt if there was any
 
             // load next opcode
-            self.opcode = self.fetch1();
+            self.opcode = self.fetch_u8();
             // debug
             println!("opcode: {:#02x} regs: {:?}", self.opcode, self.regs);
             match self.opcode { 

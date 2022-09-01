@@ -2,26 +2,29 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 use nes::cpu::CPU;
-use nes::board::{CPUBus, IORegisters};
+use nes::board::CPUBus;
 use nes::cartridge::Cartridge;
+use nes::ppu::PPU;
 
 fn main(){
 
-	// create ppu io registers
-	let ppu_regs = Rc::new(RefCell::new(IORegisters::new(8)));
+    // create ppu io registers
+    let ppu = Rc::new(RefCell::new(PPU::default()));
 
-	// load cartridge data
-	let cartridge = Cartridge::load("nestest.nes").expect("load cartridge error");
+    // load cartridge data
+    let cartridge = Cartridge::load("nestest.nes").expect("load cartridge error");
 
-	// println!("loaded cartridge {:?}", cartridge);
-	// create cpubus
-	let bus = CPUBus::new(ppu_regs, Rc::new(RefCell::new(cartridge)));
-	// create a cpu for test
-	let mut cpu = CPU::new(bus);
+    let cartridge = Rc::new(RefCell::new(cartridge));
 
-	cpu.power_up();
+    // println!("loaded cartridge {:?}", cartridge);
+    // create cpubus with cartridge and ppu
+    let bus = CPUBus::new(Rc::clone(&ppu), Rc::clone(&cartridge));
+    // create a cpu for test
+    let mut cpu = CPU::new(bus);
 
-	loop {
-		cpu.step();
-	}
+    cpu.power_up();
+
+    loop {
+        cpu.step();
+    }
 }
