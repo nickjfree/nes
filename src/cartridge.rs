@@ -4,6 +4,7 @@ use std::fs::File;
 use byteorder::ReadBytesExt;
 use crate::board::Ram;
 
+// cartridge header
 #[derive(Default, Debug)]
 struct CartridgeHeader {
     magic:    [u8; 4],
@@ -17,6 +18,7 @@ struct CartridgeHeader {
 
 impl CartridgeHeader {
 
+    // load cartridge header from reader
     fn read<T: ReadBytesExt>(reader: &mut T)  -> Result<Self, Box<dyn Error>> {
         let mut header = CartridgeHeader::default();
         reader.read_exact(&mut header.magic)?;
@@ -31,8 +33,7 @@ impl CartridgeHeader {
     }
 }
 
-
-
+// cartridge
 #[derive(Default, Debug)]
 pub struct Cartridge {
     header: CartridgeHeader,
@@ -42,6 +43,7 @@ pub struct Cartridge {
 
 impl Cartridge {
 
+    // load cartridge data from reader
     fn read<T: ReadBytesExt>(reader: &mut T) -> Result<Self, Box<dyn Error>> {
 
         let mut cartridge = Cartridge::default();
@@ -61,17 +63,20 @@ impl Cartridge {
         Ok(cartridge)
     }
 
+    // load cartridge from nes file
     pub fn load(file: &str) -> Result<Cartridge, Box<dyn Error>> {
         let mut file = File::open(file)?;
         let cartridge = Cartridge::read(&mut file)?;
         Ok(cartridge)
     }
 
+    // get reference of program rom 
     pub fn program(&self, index: usize) -> &Ram {
         let index = index % self.prg_roms.len();
         &self.prg_roms[index]
     }
 
+    // get mutable reference of program rom 
     pub fn program_mut(&mut self, index: usize) -> &mut Ram {
         let index = index % self.prg_roms.len();
         &mut self.prg_roms[index]

@@ -677,7 +677,7 @@ impl CPU {
             // load next opcode
             self.opcode = self.fetch_u8();
             // debug
-            println!("opcode: {:#02x} regs: {:?}", self.opcode, self.regs);
+            // println!("opcode: {:#02x} regs: {:?}", self.opcode, self.regs);
             match self.opcode { 
                 0x00 => { self.implied();       self.brk();     self.cycles_delay+=7; },
                 0x01 => { self.indirect_x();    self.ora();     self.cycles_delay+=6; },

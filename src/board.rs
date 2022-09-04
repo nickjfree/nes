@@ -38,10 +38,21 @@ impl DerefMut for Ram {
 
 impl Ram {
 
+    pub fn read_u8(&mut self, addr: u16) -> u8 {
+        self.data[addr as usize]
+    }
+
+    pub fn write_u8(&mut self, addr: u16, val: u8) -> u32 {
+        self.data[addr as usize] = val;
+        0
+    }
+
     pub fn reset(&mut self) {
         self.data.iter_mut().map(|x| *x = 0).count();
     }
 }
+
+pub type Signal = u8;
 
 
 // the cpu bus
@@ -83,6 +94,7 @@ impl CPUBus {
 
     // load address
     pub fn read_u8(&self, addr: u16) -> u8 {
+        // println!("read {:#02x}", addr);
 
         match addr {
             // internal_ram
@@ -95,7 +107,7 @@ impl CPUBus {
             },
             // ppu registers
             0x2000..=0x3fff => {
-                let addr = (addr - 0x2000) & 0x07 + 0x2000;
+                let addr = ((addr - 0x2000) & 0x07) + 0x2000;
                 self.ppu.borrow_mut().read_u8(addr)
             },
             // oam dma
