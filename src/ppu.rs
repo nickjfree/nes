@@ -106,15 +106,18 @@ impl PPUBus {
     }
 
     pub fn read_u8(&mut self, addr: u16) -> u8 {
+        let addr = addr & 0x7fff;
         match addr {
             0x0000..=0x1fff => {
+                // TODO:  implement mappers for chr
                 self.parttern_table.read_u8(addr)
             },
             0x2000..=0x3eff => {
-                self.name_table.read_u8(addr - 0x2000)
+                // TODO:  implement mappers for nametable
+                self.name_table.read_u8((addr - 0x2000))
             },
             0x3f00..=0x3fff => {
-                self.pallette.read_u8(addr - 0x3f00)
+                self.pallette.read_u8((addr - 0x3f00) % 32)
             },
             _ => panic!("read vram address {:#02x}", addr),
         }
@@ -291,6 +294,9 @@ pub struct PPU {
     // render status
     rs: RenderStatus,
 
+    // palette color
+    palette_color: Vec<u8>,
+
     // output buffer
     output: Vec<u8>,
     // ppu contrl flags
@@ -321,6 +327,12 @@ impl PPU {
         Self{
             ppu_bus: PPUBus::new(),
             output: vec![0; 256*240*3],
+            palette_color: vec![
+                 84,  84,  84,  0,     0,  30, 116, 0,    8,  16, 144, 0,     48,   0, 136, 0,    68,   0, 100, 0,    92,   0,  48, 0,    84,   4,   0, 0,    60,  24,   0, 0,     32,  42,   0, 0,      8,  58,   0, 0,     0,  64,   0,  0,    0,  60,   0, 0,     0,  50,  60, 0,    0,   0,   0, 0,   0, 0, 0, 0,  0, 0, 0, 0,  
+                152, 150, 152,  0,     8,  76, 196, 0,   48,  50, 236, 0,     92,  30, 228, 0,   136,  20, 176, 0,   160,  20, 100, 0,   152,  34,  32, 0,   120,  60,   0, 0,     84,  90,   0, 0,     40, 114,   0, 0,     8, 124,   0,  0,    0, 118,  40, 0,     0, 102, 120, 0,    0,   0,   0, 0,   0, 0, 0, 0,  0, 0, 0, 0,  
+                236, 238, 236,  0,    76, 154, 236, 0,  120, 124, 236, 0,    176,  98, 236, 0,   228,  84, 236, 0,   236,  88, 180, 0,   236, 106, 100, 0,   212, 136,  32, 0,    160, 170,   0, 0,    116, 196,   0, 0,    76, 208,  32,  0,   56, 204, 108, 0,    56, 180, 204, 0,   60,  60,  60, 0,   0, 0, 0, 0,  0, 0, 0, 0,  
+                236, 238, 236,  0,   168, 204, 236, 0,  188, 188, 236, 0,    212, 178, 236, 0,   236, 174, 236, 0,   236, 174, 212, 0,   236, 180, 176, 0,   228, 196, 144, 0,    204, 210, 120, 0,    180, 222, 120, 0,   168, 226, 144,  0,  152, 226, 180, 0,   160, 214, 228, 0,  160, 162, 160, 0,   0, 0, 0, 0,  0, 0, 0, 0,  
+            ],
             ..PPU::default()
         }
     }
@@ -380,7 +392,7 @@ impl PPU {
                 // Thus, after setting the VRAM address, one should first read this register to prime the pipeline and discard the result.
                 // Reading palette data from $3F00-$3FFF works differently. The palette data is placed immediately on the data bus, and hence no priming read is required. 
                 //Reading the palettes still updates the internal buffer though, but the data placed in it is the mirrored nametable data that would appear "underneath" the palette. (Checking the PPU memory map should make this clearer.)
-                match self.regs.v {
+                match self.regs.v & 0x7fff {
                     // buffered
                     0x0000..=0x3eff => {
                         ret = self.regs.vram_read_buffer;
@@ -391,7 +403,7 @@ impl PPU {
                         ret = data;
                         self.regs.vram_read_buffer = data;
                     },
-                    _ => panic!("read vram address {:#02x}", addr),
+                    _ => panic!("read vram address {:#02x}", self.regs.v),
                 }
                 self.regs.v = self.regs.v.wrapping_add(self.vram_increment);
                 ret
@@ -424,13 +436,14 @@ impl PPU {
             // +--------- Generate an NMI at the start of the
             //            vertical blanking interval (0: off; 1: on)
             PPUCTRL =>  {
+                let val = val as u16;
                 // t: ...GH.. ........ <- d: ......GH
                 // <used elsewhere> <- d: ABCDEF..
-                self.regs.t = (self.regs.t & 0xf3ff) | (val as u16 & 0x03 << 10);
-                self.vram_increment = if val & 0x04 != 0 { 32 } else { 1 };
-                self.background_table = if val & 0x10 != 0 { 0x0000 } else { 0x1000 };
-                self.sprite_table = if val & 0x08 != 0 { 0x0000 } else { 0x1000 };
-                self.nmi_enabled = if val & 0x80 != 0 { true } else { false };
+                self.regs.t = (self.regs.t & 0xf3ff) | ((val & 0x03) << 10);
+                self.vram_increment = if val & 0x04 == 0 { 1 } else { 32 };
+                self.background_table = if val & 0x10 == 0 { 0x0000 } else { 0x1000 };
+                self.sprite_table = if val & 0x08 == 0 { 0x0000 } else { 0x1000 };
+                self.nmi_enabled = if val & 0x80 == 0 { false } else { true };
             },
             // write ppu mask
             //             7  bit  0
@@ -465,41 +478,44 @@ impl PPU {
             },
             // write ppu scroll
             PPUSCROLL => {   
+                let val = val as u16;
                 match self.regs.w {
                     0 => {
                         // t: ....... ...ABCDE <- d: ABCDE...
                         // x:              FGH <- d: .....FGH
                         // w:                  <- 1
-                        self.regs.t = (self.regs.t & 0xffe0) | ((val as u16 >> 3) & 0x1f);
-                        self.regs.x = val & 0x07;
+                        self.regs.t = (self.regs.t & 0xffe0) | ((val >> 3) & 0x1f);
+                        self.regs.x = (val & 0x07) as u8;
                         self.regs.w = 1;
                     },
                     1 => {
                         //     10001100 00011111
                         //  t: FGH..AB CDE..... <- d: ABCDEFGH
                         //  w:                  <- 0
-                        self.regs.t = (self.regs.t & 0x8c1f) | (val as u16 & 0xf8 << 2) | (val as u16 & 0x07 << 12);
+                        self.regs.t = (self.regs.t & 0x8c1f) | ((val & 0xf8) << 2) | (val & 0x07 << 12);
                         self.regs.w = 0;
                     },
                     _ => (),
                 }
             },
             // write vram addr
-            PPUADDR => {   
+            PPUADDR => {
+                let val = val as u16;
                 match self.regs.w {
+                   
                     0 => {
                         // t: .CDEFGH ........ <- d: ..CDEFGH
                         //        <unused>     <- d: AB......
                         // t: Z...... ........ <- 0 (bit Z is cleared)
                         // w:                  <- 1     
-                        self.regs.t = (self.regs.t & 0x80ff) | (val as u16 & 0x003f << 8);
+                        self.regs.t = (self.regs.t & 0x80ff) | ((val & 0x003f) << 8);
                         self.regs.w = 1;
                     },
                     1 => {
                         // t: ....... ABCDEFGH <- d: ABCDEFGH
                         // v: <...all bits...> <- t: <...all bits...>
                         // w:                  <- 0
-                        self.regs.t = (self.regs.t & 0xff00) | (val as u16 & 0x00ff);
+                        self.regs.t = (self.regs.t & 0xff00) | (val & 0x00ff);
                         self.regs.v = self.regs.t;
                         self.regs.w = 0;
 
@@ -549,31 +565,56 @@ impl PPU {
 
     fn fetch_bg_tile_low(&mut self) {
         let fine_y = (self.regs.v >> 12) & 0x07;
-        let addr = self.background_table.wrapping_add(self.rs.tile_index as u16 * 16 + fine_y);
+        let index = self.rs.tile_index as u16;
+        let addr = self.background_table.wrapping_add((index << 4) | fine_y);
         self.rs.tile_low = self.ppu_bus.read_u8(addr) ;
     }
 
     fn fetch_bg_tile_high(&mut self) {
         let fine_y = (self.regs.v >> 12) & 0x07;
-        let addr = self.background_table.wrapping_add(self.rs.tile_index as u16 * 16 + 8 + fine_y);
+        let index = self.rs.tile_index as u16;
+        let addr = self.background_table.wrapping_add((index << 4) | 0x08 | fine_y );
         self.rs.tile_high = self.ppu_bus.read_u8(addr);
-        let mut data: u32 = 0;
+        let mut data: u64 = 0;
         // store data to shift registers
         for i in 0..8 {
-            let t1 = self.rs.tile_low >> (7 - i) & 0x01;
-            let t2 = self.rs.tile_high >> (7 - i) & 0x01;
+            let t1 = (self.rs.tile_low >> (7 - i)) & 0x01;
+            let t2 = (self.rs.tile_high >> (7 - i)) & 0x01;
             data <<= 4;
-            data |= (self.rs.at_data | t1 | t2 << 1) as u32;
+            data |= (self.rs.at_data | t1 | (t2 << 1)) as u64;
         }
-        self.rs.tile_data |= data as u64;
+        self.rs.tile_data |= data;
+    }
+
+    // color index to color
+    fn get_color(&self, color_index: u8) -> (u8, u8, u8) {
+        let offset = (color_index * 4) as usize;
+        (self.palette_color[offset], self.palette_color[offset+1], self.palette_color[offset+2])
     }
 
     // visible and pre-render line logic
-    fn fetch_cycle_update(&mut self) -> u8 {
+    fn fetch_cycle_update(&mut self) {
         let cycle = self.rs.cycle;
         let scanline = self.rs.scanline;
-        let mut color_index: u8 = 0;
         if self.rs.is_render_enabled() {
+            // draw logic
+            match (scanline, cycle) {
+                (0..=239, 1..=256) => {
+                    let palette_index = ((self.rs.tile_data >> (60 - self.regs.x * 4)) & 0x0f) as u16;
+                    let color_index = self.ppu_bus.read_u8(0x3f00 + palette_index);
+                    let color = self.get_color(color_index);
+                    // let color: (u8, u8, u8) = (self.rs.tile_high, self.rs.tile_high, self.rs.tile_high);
+                    self.rs.tile_data <<= 4;
+                    // set output
+                    let (x, y) = (cycle as u32 - 1, scanline as u32);
+                    let offset: usize = (y * 256 * 3 + x * 3) as usize;
+                    self.output[offset + 0] = color.0;
+                    self.output[offset + 1] = color.1;
+                    self.output[offset + 2] = color.2;
+                },
+                _ => (),
+            }
+            // fetch logic
             match cycle {
                 0 => (),
                 1..=256 | 321..=336 => {
@@ -589,25 +630,11 @@ impl PPU {
                 258..=320 => (), // TODO: sprite evaluation
                 _ => (),
             }
-            // draw logic
-            match (scanline, cycle) {
-                (0..=230, 1..=256) => {
-                    color_index = ((self.rs.tile_data & 0xf000000000000000 >> 60) & 0x0f) as u8;
-                    
-                    self.rs.tile_data <<= 4;
-                    // set output
-                    let (x, y) = (cycle as u32 - 1, scanline as u32);
-                    self.output[(y * 256 * 3 + x) as usize] = color_index;
-                    self.output[(y * 256 * 3 + x + 1) as usize] = color_index;
-                    self.output[(y * 256 * 3 + x + 2) as usize] = color_index;
-                },
-                _ => (),
-            }
         }
         // special logic
         match (scanline, cycle) {
-            (_, 257) => self.regs.copy_hori_t(),
-            (_, 256) => self.regs.inc_vert_v(),
+            (0..=239 | 261, 257) => self.regs.copy_hori_t(),
+            (0..=239 | 261, 256) => self.regs.inc_vert_v(),
             (261, 1) => {
                 self.nmi_occurred = false;
                 self.rs.sprite_overflow = false;
@@ -622,7 +649,6 @@ impl PPU {
             },
             _ => (),
         }
-        color_index
     }
 
     fn vblank_cycle_update(&mut self) {
@@ -644,7 +670,7 @@ impl PPU {
     }
 
     // step simulation
-    pub fn step(&mut self) -> u8 {
+    pub fn tick(&mut self) -> u8 {
         self.vblank_cycle_update();
         self.fetch_cycle_update();
         self.update_nmi();
@@ -1252,11 +1278,17 @@ impl PPU {
             0x00, 0x10, 0x50, 0x10, 0x00, 0x00, 0x00, 0x30,
         ];
 
+        let palette = vec![
+            0x22, 0x29, 0x1A, 0x0F, 0x22, 0x36, 0x17, 0x0F, 0x22, 0x30, 0x21, 0x0F, 0x22, 0x27, 0x17, 0x0F,   //   ;;background palette
+            0x22, 0x1C, 0x15, 0x14, 0x22, 0x02, 0x38, 0x3C, 0x22, 0x1C, 0x15, 0x14, 0x22, 0x02, 0x38, 0x3C,   //   ;;sprite palette
+        ];
+
         // load test data to ppu
 
         chr.iter().enumerate().for_each(|(i, x)| {self.ppu_bus.write_u8(i as u16, *x);});
         background.iter().enumerate().for_each(|(i, x)| {self.ppu_bus.write_u8(i as u16 + 0x2000, *x);});
         attr.iter().enumerate().for_each(|(i, x)| {self.ppu_bus.write_u8(i as u16 + 0x23c0, *x);});
+        palette.iter().enumerate().for_each(|(i, x)| {self.ppu_bus.write_u8(i as u16 + 0x3f00, *x);});
     }
 
 }

@@ -190,7 +190,7 @@ impl CPU {
     fn relative(&mut self) -> u8 {
         let d = self.fetch_u8();
         let rel: u16 = (d as i8) as u16;
-        let base = self.regs.pc.wrapping_sub(1);
+        let base = self.regs.pc;
         self.op_addr = base.wrapping_add(rel);
         self.handle_cross_page(self.op_addr, base);
         0
@@ -669,7 +669,7 @@ impl CPU {
     }
 
     // step simulation
-    pub fn step(&mut self) -> u32 {
+    pub fn tick(&mut self) -> u32 {
 
         if self.cycles_delay <= 0 {
             // handle interupt if there was any
@@ -677,7 +677,7 @@ impl CPU {
             // load next opcode
             self.opcode = self.fetch_u8();
             // debug
-            // println!("opcode: {:#02x} regs: {:?}", self.opcode, self.regs);
+            println!("opcode: {:#02x} regs: {:?} ", self.opcode, self.regs);
             match self.opcode { 
                 0x00 => { self.implied();       self.brk();     self.cycles_delay+=7; },
                 0x01 => { self.indirect_x();    self.ora();     self.cycles_delay+=6; },
