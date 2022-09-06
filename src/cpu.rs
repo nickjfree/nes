@@ -1,4 +1,8 @@
-use crate::board::CPUBus;
+use std::cell::RefCell;
+use std::rc::Rc;
+use crate::ppu::PPU;
+use crate::board::{ Ram, Signal };
+use crate::cartridge::Cartridge;
 
 // flags
 const STATUS_CARRAY  :u8 = 0x01;
@@ -28,6 +32,179 @@ struct Registers {
 }
 
 
+// the cpu bus
+#[derive(Default)]
+pub struct CPUBus {
+    // 0000-07FF 2K * 4
+    internal_ram: Option<Ram>,
+    // 0800-0fff
+    // 1000-17ff
+    // 1800-1fff
+
+    // 2000-2007
+    ppu: Rc<RefCell<PPU>>,
+    // TODO: apu registers, 4000-401f
+    apu: Option<Ram>,
+    // 4020-5fff 8K-20h
+    rom: Option<Ram>,
+    // 6000-7fff 8K
+    sram: Option<Ram>,
+    // 8000-bfff 16K
+    // c000-ffff 16K
+    cartridge: Rc<RefCell<Cartridge>>,
+}
+
+
+// CPU bus
+impl CPUBus {
+
+    // new cpu bus
+    pub fn new(ppu: Rc<RefCell<PPU>>, cartridge: Rc<RefCell<Cartridge>>) -> Self {
+        // internal ram
+        Self {
+            internal_ram: Some(Ram::new(8192)),
+            ppu: ppu,
+            apu: Some(Ram::new(32)),
+            rom: Some(Ram::new(8159)),
+            sram: Some(Ram::new(8192)),
+            cartridge: cartridge,
+        }
+    }
+
+    // load address
+    pub fn read_u8(&self, addr: u16) -> u8 {
+        // println!("read {:#02x}", addr);
+
+        match addr {
+            // internal_ram
+            0x0000..=0x1fff => {
+                if let Some(mem) = &self.internal_ram {
+                    mem[usize::from(addr&0x7ff)]
+                } else {
+                    0
+                }
+            },
+            // ppu registers
+            0x2000..=0x3fff => {
+                let addr = ((addr - 0x2000) & 0x07) + 0x2000;
+                self.ppu.borrow_mut().read_u8(addr)
+            },
+            // apu registers
+            0x4000..=0x401f => {
+                if let Some(mem) = &self.apu {
+                    mem[usize::from(addr-0x4000)]
+                } else {
+                    0
+                }
+            },
+            // oam dma
+            0x4014 => {
+                0
+            },
+            // cartridge rom
+            0x4020..=0x5fff => {
+                if let Some(mem) = &self.rom {
+                    mem[usize::from(addr-0x4020)]
+                } else {
+                    0
+                }
+            },
+            // cartridge sram
+            0x6000..=0x7fff => {
+                if let Some(mem) = &self.sram {
+                    mem[usize::from(addr-0x6000)]
+                } else {
+                    0
+                }
+            },
+            // cartridge program 0
+            0x8000..=0xbfff => {
+                self.cartridge.borrow().program(0)[usize::from(addr-0x8000)]
+            },
+            // cartridge program 1
+            0xc000..=0xffff => {
+                self.cartridge.borrow().program(1)[usize::from(addr-0xc000)]
+            },
+        }
+    }
+
+    // read 2 byte as an address at addr
+    pub fn read_u16(&self, addr: u16) -> u16 {
+        let l = self.read_u8(addr);
+        let h = self.read_u8(addr.wrapping_add(1));
+        (h as u16) << 8 | l as u16
+    }
+
+    // write data to bus
+    // 
+    // delay: some write may stale cpu, delay is returned 
+    pub fn write_u8(&mut self, addr: u16, data: u8) -> u32 {
+        let mut delayed_cycles = 0;
+        match addr {
+            // internal_ram
+            0x0000..=0x1fff => {
+                if let Some(mem) = &mut self.internal_ram {
+                    mem[usize::from(addr&0x7ff)] = data
+                }
+            },
+            // ppu registers
+            0x2000..=0x3fff => {
+                let addr = ((addr - 0x2000) & 0x07) + 0x2000;
+                self.ppu.borrow_mut().write_u8(addr, data);
+            },
+            // oam dma
+            0x4014 => {
+                // oam dma will stale cpu for 513+ cycles
+                delayed_cycles += self.ppu.borrow_mut().write_u8(addr, data);
+            },
+            // apu registers
+            0x4000..=0x401f => {
+                if let Some(mem) = &mut self.apu {
+                    mem[usize::from(addr-0x4000)] = data
+                }
+            },
+            // cartridge rom
+            0x4020..=0x5fff => {
+                if let Some(mem) = &mut self.rom {
+                    mem[usize::from(addr-0x4020)] = data
+                }
+            },
+            // cartridge sram
+            0x6000..=0x7fff => {
+                if let Some(mem) = &mut self.sram {
+                    mem[usize::from(addr-0x6000)] = data
+                }
+            },
+            // cartridge program 0
+            0x8000..=0xbfff => {
+                self.cartridge.borrow_mut().program_mut(0)[usize::from(addr-0x8000)] = data
+            },
+            // cartridge program 1
+            0xc000..=0xffff => {
+                self.cartridge.borrow_mut().program_mut(1)[usize::from(addr-0xc000)] = data
+            },
+        }
+        delayed_cycles
+    }
+
+    // load test data into bus
+    pub fn load_data(&mut self, addr: u16, data: &[u8]) {
+        let mut addr = addr;
+        for d in data {
+            self.write_u8(addr, *d);
+            addr = addr.wrapping_add(1);
+        }
+    }
+
+    // reset internal ram
+    pub fn reset(&mut self) {
+        if let Some(ram) = &mut self.internal_ram {
+            ram.reset();
+        }
+    }
+}
+
+
 // cpu
 #[derive(Default)]
 pub struct CPU {
@@ -40,19 +217,21 @@ pub struct CPU {
     cycles_delay: u32,
     // tmp operand address
     op_addr: u16,
-    // tmp operand value
-    op_val: u8,
+    // immediate
+    is_immediate: bool,
     // bus
     bus: CPUBus,
+    // nmi signal
+    nmi: Signal,
 }
-
 
 
 impl CPU {
     // new cpu
-    pub fn new(bus: CPUBus) -> Self {
+    pub fn new(ppu: Rc<RefCell<PPU>>, cartridge: Rc<RefCell<Cartridge>>, nmi: Signal) -> Self {
         Self {
-            bus: bus,
+            bus: CPUBus::new(ppu, cartridge),
+            nmi: nmi,
             ..CPU::default()
         }
     }
@@ -61,6 +240,12 @@ impl CPU {
 
     fn mem_read_u8(&mut self, addr: u16) -> u8 {
         self.bus.read_u8(addr)
+    }
+
+    fn mem_read_u16(&mut self, addr: u16) -> u16 {
+        let l = self.mem_read_u8(addr);
+        let h = self.mem_read_u8(addr.wrapping_add(1));
+        (h as u16) << 8 | l as u16
     }
 
     fn mem_write_u8(&mut self, addr: u16, val: u8) {
@@ -110,96 +295,84 @@ impl CPU {
         }
     }
 
-    fn implied(&mut self) -> u8 {
-        0
+    fn addressing_none(&mut self) {
+        self.op_addr = 0;
+        self.is_immediate = false;
     }
 
-    fn accumulator(&mut self) -> u8 {
-        0
+    fn implied(&mut self) {}
+
+    fn accumulator(&mut self) {}
+
+    fn immediate(&mut self) {
+        self.is_immediate = true;
     }
 
-    fn immediate(&mut self) -> u8 {
-        self.op_addr = 0xffff;
-        self.op_val = self.fetch_u8();
-        self.op_val
-    }
-
-    fn zero_page(&mut self) -> u8 {
+    fn zero_page(&mut self) {
         self.op_addr = u16::from(self.fetch_u8() & 0xff);
-        self.op_val = self.mem_read_u8(self.op_addr);
-        self.op_val
     }
 
-    fn zero_page_x(&mut self) -> u8 {
+    fn zero_page_x(&mut self) {
         // load operand
         let d = self.fetch_u8();
         self.op_addr = (d.wrapping_add(self.regs.x) & 0xFF).into();
-        self.op_val = self.mem_read_u8(self.op_addr);
-        self.op_val
     }
 
-    fn zero_page_y(&mut self) -> u8 {
+    fn zero_page_y(&mut self) {
         // load operand
         let d = self.fetch_u8();
         self.op_addr = (d.wrapping_add(self.regs.y) & 0xFF).into();
-        self.op_val = self.mem_read_u8(self.op_addr);
-        self.op_val
     }
 
-    fn absolute(&mut self) -> u8 {
+    fn absolute(&mut self) {
         self.op_addr = self.fetch_u16();
-        self.op_val = self.mem_read_u8(self.op_addr);
-        self.op_val
     }
 
-    fn absolute_x(&mut self) -> u8 {
+    fn absolute_x(&mut self) {
         let d = self.fetch_u16();
         self.op_addr = d.wrapping_add(self.regs.x as u16);
         self.handle_cross_page(self.op_addr, d);
-        self.op_val = self.mem_read_u8(self.op_addr);
-        self.op_val
     }
 
-    fn absolute_y(&mut self) -> u8 {
+    fn absolute_y(&mut self) {
         let d = self.fetch_u16();
         self.op_addr = d.wrapping_add(self.regs.y as u16);
         self.handle_cross_page(self.op_addr, d);
-        self.op_val = self.mem_read_u8(self.op_addr);
-        self.op_val
     }
 
-    fn indirect_x(&mut self) -> u8 {
+    fn indirect_x(&mut self) {
         let d = self.fetch_u8();
         let l = self.mem_read_u8(d.wrapping_add(self.regs.x).into());
         let h = self.mem_read_u8(d.wrapping_add(self.regs.x).wrapping_add(1).into());
         self.op_addr = (h as u16) << 8 | (l as u16);
-        self.op_val = self.mem_read_u8(self.op_addr);
-        self.op_val
     }
 
-    fn indirect_y(&mut self) -> u8 {
+    fn indirect_y(&mut self) {
         let d = self.fetch_u8();
         let l = self.mem_read_u8(d.into());
         let h = self.mem_read_u8(d.wrapping_add(1).into());
         self.op_addr = ((h as u16) << 8 | l as u16).wrapping_add(u16::from(self.regs.y));
         self.handle_cross_page(self.op_addr, (h as u16) << 8 | l as u16);
-        self.op_val = self.mem_read_u8(self.op_addr);
-        self.op_val
     }
 
-    fn relative(&mut self) -> u8 {
+    fn relative(&mut self) {
         let d = self.fetch_u8();
         let rel: u16 = (d as i8) as u16;
         let base = self.regs.pc;
         self.op_addr = base.wrapping_add(rel);
         self.handle_cross_page(self.op_addr, base);
-        0
     }
 
-    fn indirect(&mut self) -> u8 {
+    fn indirect(&mut self) {
         self.op_addr = self.fetch_u16();
-        self.op_addr = self.bus.read_u16(self.op_addr);
-        0
+        self.op_addr = self.mem_read_u16(self.op_addr);
+    }
+
+    fn op_val(&mut self) -> u8 {
+        match self.is_immediate {
+            true => self.fetch_u8(),
+            false => self.mem_read_u8(self.op_addr),
+        }
     }
 
     // flages
@@ -217,17 +390,17 @@ impl CPU {
     // transfer instructions
 
     fn lda(&mut self) {
-        self.regs.acc = self.op_val;
+        self.regs.acc = self.op_val();
         self.flag_nz(self.regs.acc);
     }
 
     fn ldx(&mut self) {
-        self.regs.x = self.op_val;
+        self.regs.x = self.op_val();
         self.flag_nz(self.regs.x);
     }
 
     fn ldy(&mut self) {
-        self.regs.y = self.op_val;
+        self.regs.y = self.op_val();
         self.flag_nz(self.regs.y);
     }
 
@@ -295,11 +468,11 @@ impl CPU {
 
 
     // descrements & increments
-
     fn dec(&mut self) {
-        self.op_val = self.op_val.wrapping_sub(1);
-        self.mem_write_u8(self.op_addr, self.op_val);
-        self.flag_nz(self.op_val);
+        let mut oprand = self.op_val();
+        oprand = oprand.wrapping_sub(1);
+        self.mem_write_u8(self.op_addr, oprand);
+        self.flag_nz(oprand);
     }
 
     fn dex(&mut self) {
@@ -313,9 +486,10 @@ impl CPU {
     }
 
     fn inc(&mut self) {
-        self.op_val = self.op_val.wrapping_add(1);
-        self.mem_write_u8(self.op_addr, self.op_val);
-        self.flag_nz(self.op_val);
+        let mut oprand = self.op_val();
+        oprand = oprand.wrapping_add(1);
+        self.mem_write_u8(self.op_addr, oprand);
+        self.flag_nz(oprand);
     }
 
     fn inx(&mut self) {
@@ -331,13 +505,14 @@ impl CPU {
     // arithmetic instructions
 
     fn adc(&mut self) {
-        let result: u16 = self.regs.acc as u16 + self.op_val as u16 + (self.regs.status & STATUS_CARRAY) as u16;
+        let oprand = self.op_val();
+        let result: u16 = self.regs.acc as u16 + oprand as u16 + (self.regs.status & STATUS_CARRAY) as u16;
         match result | 0xFF00 {
             0 => self.regs.status &= !STATUS_CARRAY,
             _ => self.regs.status |= STATUS_CARRAY,
         }
         let result = (result & 0xff) as u8;
-        match (self.regs.acc ^ result) & (self.op_val ^ result) & 0x80 {
+        match (self.regs.acc ^ result) & (oprand ^ result) & 0x80 {
             0 => self.regs.status &= !STATUS_OVERFLOW,
             _ => self.regs.status |= STATUS_OVERFLOW,
         }
@@ -346,36 +521,48 @@ impl CPU {
     }
 
     fn sbc(&mut self) {
-        self.op_val = 0_u8.wrapping_sub(self.op_val);
-        self.adc();
+        let oprand = 0_u8.wrapping_sub(self.op_val());
+        let result: u16 = self.regs.acc as u16 + oprand as u16 + (self.regs.status & STATUS_CARRAY) as u16;
+        match result | 0xFF00 {
+            0 => self.regs.status &= !STATUS_CARRAY,
+            _ => self.regs.status |= STATUS_CARRAY,
+        }
+        let result = (result & 0xff) as u8;
+        match (self.regs.acc ^ result) & (oprand ^ result) & 0x80 {
+            0 => self.regs.status &= !STATUS_OVERFLOW,
+            _ => self.regs.status |= STATUS_OVERFLOW,
+        }
+        self.regs.acc = result;
+        self.flag_nz(self.regs.acc);
     }
 
     // logic operations
 
     fn and(&mut self) {
-        self.regs.acc &= self.op_val;
+        self.regs.acc &= self.op_val();
         self.flag_nz(self.regs.acc);
     }
 
     fn eor(&mut self) {
-        self.regs.acc ^= self.op_val;
+        self.regs.acc ^= self.op_val();
         self.flag_nz(self.regs.acc);
     }
 
     fn ora(&mut self) {
-        self.regs.acc |= self.op_val;
+        self.regs.acc |= self.op_val();
         self.flag_nz(self.regs.acc);
     }
 
     // shift & rotate instrcutions
     fn asl(&mut self) {
-        match self.op_val & 0x80  {
+        let mut oprand = self.op_val();
+        match oprand & 0x80  {
             0 => self.regs.status &= !STATUS_CARRAY,
             _ => self.regs.status |= STATUS_CARRAY,
         }
-        self.op_val = self.op_val << 1;
-        self.mem_write_u8(self.op_addr, self.op_val);
-        self.flag_nz(self.op_val);
+        oprand <<= 1;
+        self.mem_write_u8(self.op_addr, oprand);
+        self.flag_nz(oprand);
     }
 
     fn asla(&mut self) {
@@ -388,13 +575,14 @@ impl CPU {
     }
 
     fn lsr(&mut self) {
-        match self.op_val & 0x01 {
+        let mut oprand = self.op_val();
+        match oprand & 0x01 {
             0 => self.regs.status &= !STATUS_CARRAY,
             _ => self.regs.status |= STATUS_CARRAY,
         }
-        self.op_val = self.op_val >> 1;
-        self.mem_write_u8(self.op_addr, self.op_val);
-        self.flag_nz(self.op_val);
+        oprand >>= 1;
+        self.mem_write_u8(self.op_addr, oprand);
+        self.flag_nz(oprand);
     }
 
     fn lsra(&mut self) {
@@ -408,13 +596,14 @@ impl CPU {
 
     fn rol(&mut self) {
         let old = self.regs.status & STATUS_CARRAY;
-        match self.op_val & 0x80  {
+        let mut oprand = self.op_val();
+        match oprand & 0x80  {
             0 => self.regs.status &= !STATUS_CARRAY,
             _ => self.regs.status |= STATUS_CARRAY,
         }
-        self.op_val = (self.op_val << 1).wrapping_add(old);
-        self.mem_write_u8(self.op_addr, self.op_val);
-        self.flag_nz(self.op_val)
+        oprand = (oprand << 1).wrapping_add(old);
+        self.mem_write_u8(self.op_addr, oprand);
+        self.flag_nz(oprand)
     }
 
 
@@ -430,13 +619,14 @@ impl CPU {
 
     fn ror(&mut self) {
         let old = (self.regs.status & STATUS_CARRAY) << 7;
-        match self.op_val & 0x01  {
+        let mut oprand = self.op_val();
+        match oprand & 0x01  {
             0 => self.regs.status &= !STATUS_CARRAY,
             _ => self.regs.status |= STATUS_CARRAY,
         }
-        self.op_val = (self.op_val >> 1).wrapping_add(old);
-        self.mem_write_u8(self.op_addr, self.op_val);
-        self.flag_nz(self.op_val)
+        oprand = (oprand >> 1).wrapping_add(old);
+        self.mem_write_u8(self.op_addr, oprand);
+        self.flag_nz(oprand)
     }
 
     fn rora(&mut self) {
@@ -481,7 +671,8 @@ impl CPU {
 
     // comparisions
     fn cmp(&mut self) {
-        let m = 0_u8.wrapping_sub(self.op_val) as u16;
+        // println!("CMP, regs: {:?}, ops: {:#04x} {:#04x} ", self.regs, self.op_val(), self.op_addr);
+        let m = 0_u8.wrapping_sub(self.op_val()) as u16;
         let result = self.regs.acc as u16 + m;
         match result | 0xFF00 {
             0 => self.regs.status &= !STATUS_CARRAY,
@@ -492,7 +683,7 @@ impl CPU {
     }
 
     fn cpx(&mut self) {
-        let m = 0_u8.wrapping_sub(self.op_val) as u16;
+        let m = 0_u8.wrapping_sub(self.op_val()) as u16;
         let result = self.regs.x as u16 + m;
         match result | 0xFF00 {
             0 => self.regs.status &= !STATUS_CARRAY,
@@ -503,7 +694,7 @@ impl CPU {
     }
 
     fn cpy(&mut self) {
-        let m = 0_u8.wrapping_sub(self.op_val) as u16;
+        let m = 0_u8.wrapping_sub(self.op_val()) as u16;
         let result = self.regs.y as u16 + m;
         match result | 0xFF00 {
             0 => self.regs.status &= !STATUS_CARRAY,
@@ -630,13 +821,14 @@ impl CPU {
     // others
 
     fn bit(&mut self) {
-        let result = self.regs.acc & self.op_val;
+        let oprand = self.op_val();
+        let result = self.regs.acc & oprand;
         self.flag_nz(result);
-        match self.op_val & STATUS_NEG {
+        match oprand & STATUS_NEG {
             0 => self.regs.status &= !STATUS_NEG,
             _ => self.regs.status |= STATUS_NEG,
         }
-        match self.op_val & STATUS_OVERFLOW {
+        match oprand & STATUS_OVERFLOW {
             0 => self.regs.status &= !STATUS_OVERFLOW,
             _ => self.regs.status |= STATUS_OVERFLOW,
         }
@@ -644,6 +836,17 @@ impl CPU {
 
     fn nop(&mut self) {
 
+    }
+
+    fn handle_interupt(&mut self) -> bool {
+        let mut nmi = self.nmi.borrow_mut();
+        match *nmi {
+            0 => false,
+            _ => {
+                println!("cpu nmi detected");
+                true
+            },
+        }
     }
 
     // status
@@ -672,12 +875,16 @@ impl CPU {
     pub fn tick(&mut self) -> u32 {
 
         if self.cycles_delay <= 0 {
-            // handle interupt if there was any
-
+            
+            if self.handle_interupt() {
+                return 0;
+            }
             // load next opcode
             self.opcode = self.fetch_u8();
+            // clear addressing mode
+            self.addressing_none();
             // debug
-            println!("opcode: {:#02x} regs: {:?} ", self.opcode, self.regs);
+            // println!("opcode: {:#02x} regs: {:?} ", self.opcode, self.regs);
             match self.opcode { 
                 0x00 => { self.implied();       self.brk();     self.cycles_delay+=7; },
                 0x01 => { self.indirect_x();    self.ora();     self.cycles_delay+=6; },

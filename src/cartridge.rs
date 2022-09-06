@@ -81,4 +81,8 @@ impl Cartridge {
         let index = index % self.prg_roms.len();
         &mut self.prg_roms[index]
     }
+
+    pub fn chr_mut(&mut self) -> &mut Ram {
+        &mut self.chr_roms[0]
+    }
 }
