@@ -656,21 +656,17 @@ impl PPU {
                 _ => (),
             }
         }
-        // special logic
-        match (scanline, cycle) {
-            (261, 1) => {
-                self.nmi_occurred = false;
-                self.rs.sprite_overflow = false;
-                self.rs.sprite_0_hit = false;
-            },
-            _ => (),
-        }
     }
 
     fn vblank_cycle_update(&mut self) {
         match (self.rs.scanline, self.rs.cycle) {
             (241, 1) => {
                 self.nmi_occurred = true;
+            },
+            (261, 1) => {
+                self.nmi_occurred = false;
+                self.rs.sprite_overflow = false;
+                self.rs.sprite_0_hit = false;
             },
             _ => (),
         }
