@@ -345,7 +345,7 @@ impl PPU {
 
     // read ppu registers
     pub fn read_u8(&mut self, addr: u16) -> u8 {
-        // println!("PPU: read {:#04x}", addr);
+        println!("PPU: read {:#04x}", addr);
         match addr {
             // read ppu status
             //             7  bit  0
@@ -423,7 +423,7 @@ impl PPU {
 
     // write ppu registers
     pub fn write_u8(&mut self, addr: u16, val: u8) -> u32 {
-        // println!("PPU: write {:#02x} {:#02x} {:?}", addr, val, self.regs);
+        println!("PPU: write {:#02x} {:#02x} {:?}", addr, val, self.regs);
         let mut delay = 0;
         self.regs.bus_data = val;
         match addr {
@@ -543,7 +543,7 @@ impl PPU {
             },
             // write oam dma
             OAMDMA => {
-
+                println!("oam dma");
             },
             _ => (),
         }

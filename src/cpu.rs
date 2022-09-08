@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::fmt;
 use crate::ppu::PPU;
 use crate::board::{ Ram, Signal };
 use crate::cartridge::Cartridge;
@@ -29,6 +30,14 @@ struct Registers {
     sp: u8,
     // status register
     status: u8,
+}
+
+impl fmt::Display for Registers {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "A: {:#04x}, X: {:#04x}, Y: {:#04x}, PC: {:#06x}, S: {:#04x}, P: {:#010b}",
+            self.acc, self.x, self.y, self.pc, self.sp, self.status)?;
+        Ok(())
+    }
 }
 
 
@@ -432,7 +441,7 @@ impl CPU {
     }
 
     fn txa(&mut self) {
-        self.regs.acc = self.regs.sp;
+        self.regs.acc = self.regs.x;
         self.flag_nz(self.regs.acc);
     }
 
@@ -803,6 +812,25 @@ impl CPU {
 
     // interupts
 
+    fn nmi(&mut self) {
+        // set I flag
+        let status = self.regs.status | STATUS_INTERUPT | STATUS_B1;
+        self.push_u16(self.regs.pc);
+        self.push_u8(status);
+        self.regs.pc = self.bus.read_u16(0xfffa);
+        self.cycles_delay += 7;
+    }
+
+    fn irq(&mut self) {
+        // set I flag
+        let status = self.regs.status | STATUS_INTERUPT | STATUS_B1;
+        self.push_u16(self.regs.pc);
+        self.push_u8(status);
+        self.regs.pc = self.bus.read_u16(0xfffc);
+        self.regs.status |= STATUS_INTERUPT;
+        self.cycles_delay += 7;
+    }
+
     fn brk(&mut self) {
         // read next instruction byte (and throw it away)
         self.fetch_u8();
@@ -839,14 +867,19 @@ impl CPU {
     }
 
     fn handle_interupt(&mut self) -> bool {
-        let mut nmi = self.nmi.borrow_mut();
-        match *nmi {
-            0 => false,
-            _ => {
-                println!("cpu nmi detected");
-                true
-            },
+        // check nmi
+        let has_nmi = {
+            let mut nmi = self.nmi.borrow_mut();
+            match *nmi {
+                0 => false,
+                _ => { *nmi = 0; true},
+            }
+        };
+        if has_nmi {
+            println!("nmi");
+            self.nmi();
         }
+        has_nmi
     }
 
     // status
@@ -884,7 +917,7 @@ impl CPU {
             // clear addressing mode
             self.addressing_none();
             // debug
-            // println!("opcode: {:#02x} regs: {:?} ", self.opcode, self.regs);
+            // println!("opcode: {:#02x} regs: {} ", self.opcode, self.regs);
             match self.opcode { 
                 0x00 => { self.implied();       self.brk();     self.cycles_delay+=7; },
                 0x01 => { self.indirect_x();    self.ora();     self.cycles_delay+=6; },
