@@ -810,12 +810,12 @@ impl CPU {
     }
 
     fn jsr(&mut self) {
-        self.push_u16(self.regs.pc);
+        self.push_u16(self.regs.pc.wrapping_sub(1));
         self.regs.pc = self.op_addr;
     }
 
     fn rts(&mut self) {
-        self.regs.pc = self.pop_u16();
+        self.regs.pc = self.pop_u16().wrapping_add(1);
     }
 
     // interupts
@@ -848,15 +848,15 @@ impl CPU {
         let status = self.regs.status | STATUS_INTERUPT | STATUS_B1 | STATUS_B2;
         self.push_u16(self.regs.pc);
         self.push_u8(status);
-        println!("before brk {}", self.regs);
+        // println!("before brk {}", self.regs);
         self.regs.pc = self.bus.read_u16(0xfffe);
     }
 
     fn rti(&mut self) {
         self.regs.status = self.pop_u8() & !STATUS_B1 & !STATUS_B2;
-        println!("before rti {}", self.regs);
+        // println!("before rti {}", self.regs);
         self.regs.pc = self.pop_u16();
-        println!("after rti {}", self.regs);
+        // println!("after rti {}", self.regs);
     }
 
     // others
@@ -1104,7 +1104,7 @@ impl CPU {
                 0xFC => { self.absolute_x();    self.nop();     self.cycles_delay+=4; },
                 0xFD => { self.absolute_x();    self.sbc();     self.cycles_delay+=4; },
                 0xFE => { self.absolute_x();    self.inc();     self.cycles_delay+=7; },
-                _=> panic!("unknow opcode {:#02x} {:?}", self.opcode, self.regs),
+                _=> panic!("unknow opcode {:#02x} {}", self.opcode, self.regs),
             }
         } else {
             self.cycles_delay -= 1;
