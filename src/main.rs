@@ -5,7 +5,6 @@ use std::error::Error;
 
 use sdl2::pixels::{Color, PixelFormatEnum};
 use sdl2::event::Event;
-// use sdl2::keyboard::Keycode;
 // use std::time::Duration;
 
 use std::cell::RefCell;
@@ -14,6 +13,7 @@ use nes::cpu::{ CPU };
 use nes::board::{ Signal };
 use nes::cartridge::Cartridge;
 use nes::ppu::PPU;
+use nes::controller::Controller;
 
 
 // 1.79 cycle per ms
@@ -29,11 +29,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     // load cartridge data
     let cartridge = Cartridge::load("nestest.nes").expect("load cartridge error");
     let cartridge = Rc::new(RefCell::new(cartridge));
+    // controller
+    let controller = Rc::new(RefCell::new(Controller::new()));
     // create ppu
     let ppu = PPU::new(Rc::clone(&cartridge), Rc::clone(&nmi));
     let ppu = Rc::new(RefCell::new(ppu));
     // create a cpu for test
-    let mut cpu = CPU::new(Rc::clone(&ppu), Rc::clone(&cartridge), Rc::clone(&nmi));
+    let mut cpu = CPU::new(Rc::clone(&ppu), Rc::clone(&cartridge), Rc::clone(&controller), Rc::clone(&nmi));
     cpu.power_up();
 
     // test
@@ -74,9 +76,18 @@ fn main() -> Result<(), Box<dyn Error>> {
     'running: loop {
         // handle event
         for event in event_pump.poll_iter() {
+
+            let mut controller = controller.borrow_mut();
+
             match event {
                 Event::Quit {..} => {
                     break 'running
+                },
+                Event::KeyDown { keycode, .. } => {
+                    controller.key_down(keycode);
+                },
+                Event::KeyUp { keycode, .. } => {
+                    controller.key_up(keycode);
                 },
                 _ => {}
             }
