@@ -1,23 +1,18 @@
 extern crate sdl2;
 
-use std::time::{Duration};
 use std::error::Error;
-
-use sdl2::pixels::{Color, PixelFormatEnum};
-use sdl2::event::Event;
-// use std::time::Duration;
-
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::time::Duration;
+use sdl2::pixels::{Color, PixelFormatEnum};
+use sdl2::event::Event;
+
 use nes::cpu::{ CPU };
 use nes::board::{ Signal };
 use nes::cartridge::Cartridge;
 use nes::ppu::PPU;
 use nes::controller::Controller;
-
-
-// 1.79 cycle per ms
-// const CPU_FREQ: f32 = 1.79;
+use nes::clock::Clock;
 
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -27,7 +22,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // nmi signal line
     let nmi = Signal::default();
     // load cartridge data
-    let cartridge = Cartridge::load("nestest.nes").expect("load cartridge error");
+    let cartridge = Cartridge::load("dk.nes").expect("load cartridge error");
     let cartridge = Rc::new(RefCell::new(cartridge));
     // controller
     let controller = Rc::new(RefCell::new(Controller::new()));
@@ -38,28 +33,25 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut cpu = CPU::new(Rc::clone(&ppu), Rc::clone(&cartridge), Rc::clone(&controller), Rc::clone(&nmi));
     cpu.power_up();
 
-    // test
+    // reset ppu
     {
         let mut p = ppu.borrow_mut();
-        // p.load_test_data();
         p.reset();
-        // p.write_u8(0x2000, 0x90);
-        // p.write_u8(0x2001, 0x1e);
-        // p.write_u8(0x2005, 0x00);
-        // p.write_u8(0x2005, 0x00);
     }
+    // clock
+    let mut clock = Clock::new();
 
     // **** gui setup  ****
 
     let sdl_context = sdl2::init().unwrap();
     let video_subsystem = sdl_context.video().unwrap();
 
-    let window = video_subsystem.window("nes", 256, 240)
+    let window = video_subsystem.window("nes", 256 * 4, 240 * 4)
         .position_centered()
         .build()
         .unwrap();
 
-    let mut canvas = window.into_canvas().build().unwrap();
+    let mut canvas = window.into_canvas().accelerated().present_vsync().build().unwrap();
     canvas.set_draw_color(Color::RGB(0, 0, 0));
     canvas.clear();
     canvas.present();
@@ -72,9 +64,10 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 
     let mut event_pump = sdl_context.event_pump().unwrap();
-    // let mut prev_time = Instant::now();
+
+    // game loop
     'running: loop {
-        // handle event
+        // handle key event
         for event in event_pump.poll_iter() {
 
             let mut controller = controller.borrow_mut();
@@ -92,35 +85,33 @@ fn main() -> Result<(), Box<dyn Error>> {
                 _ => {}
             }
         }
-        // emulation for one frame
+        // emulation for one loop
         let mut present: u8 = 0;
-        for _ in 0..29800 {
+        let cycles = clock.get_cycles_past();
+        for _ in 0..cycles {
             cpu.tick();
             let mut ppu = ppu.borrow_mut();
             present |= ppu.tick() | ppu.tick() | ppu.tick();
-        }       
-        match present {
-            0 => (),
-            _ => {               
-                // time to refresh
-                let ppu = ppu.borrow();
-                let output = ppu.get_output();
-                texture.with_lock(None, |buffer: &mut [u8], pitch: usize| {
-                    for y in 0..240 {
-                        for x in 0..256 {
-                            let offset = y * pitch + x * 3;
-                            buffer[offset] = output[offset];
-                            buffer[offset + 1] = output[offset + 1];
-                            buffer[offset + 2] = output[offset + 2];
-                        }
+        }
+        if present != 0 {
+            // time to refresh 
+            let ppu = ppu.borrow();
+            let output = ppu.get_output();
+            texture.with_lock(None, |buffer: &mut [u8], pitch: usize| {
+                for y in 0..240 {
+                    for x in 0..256 {
+                        let offset = y * pitch + x * 3;
+                        buffer[offset] = output[offset];
+                        buffer[offset + 1] = output[offset + 1];
+                        buffer[offset + 2] = output[offset + 2];
                     }
-                })?;
-                canvas.clear();
-                canvas.copy(&texture, None, None)?;
-                canvas.present();
-            },
-        }        
-        ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 60));
+                }
+            })?;
+            canvas.clear();
+            canvas.copy(&texture, None, None)?;
+            canvas.present();
+        }
+        ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 120));
     }
     println!("byte!");
     Ok(())

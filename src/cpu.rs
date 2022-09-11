@@ -263,12 +263,6 @@ impl CPU {
         self.bus.read_u8(addr)
     }
 
-    fn mem_read_u16(&mut self, addr: u16) -> u16 {
-        let l = self.mem_read_u8(addr);
-        let h = self.mem_read_u8(addr.wrapping_add(1));
-        (h as u16) << 8 | l as u16
-    }
-
     fn mem_write_u8(&mut self, addr: u16, val: u8) {
         self.cycles_delay += self.bus.write_u8(addr, val)
     }
@@ -386,7 +380,11 @@ impl CPU {
 
     fn indirect(&mut self) {
         self.op_addr = self.fetch_u16();
-        self.op_addr = self.mem_read_u16(self.op_addr);
+        // 6502 indirect JMP bug
+        let l = self.mem_read_u8(self.op_addr) as u16;
+        let addr_high =  (self.op_addr.wrapping_add(1) & 0x00ff) | (self.op_addr & 0xff00);
+        let h = self.mem_read_u8(addr_high) as u16;
+        self.op_addr = (h << 8) | l;
     }
 
     fn op_val(&mut self) -> u8 {
@@ -928,7 +926,7 @@ impl CPU {
             // clear addressing mode
             self.addressing_none();
             // debug
-            println!("opcode: {:#02x} regs: {} ", self.opcode, self.regs);
+            // println!("opcode: {:#02x} regs: {} ", self.opcode, self.regs);
             match self.opcode { 
                 0x00 => { self.implied();       self.brk();     self.cycles_delay+=7; },
                 0x01 => { self.indirect_x();    self.ora();     self.cycles_delay+=6; },
@@ -1090,6 +1088,7 @@ impl CPU {
                 0xE8 => { self.implied();       self.inx();     self.cycles_delay+=2; },
                 0xE9 => { self.immediate();     self.sbc();     self.cycles_delay+=2; },
                 0xEA => { self.implied();       self.nop();     self.cycles_delay+=2; },
+                0xEB => { self.immediate();     self.sbc();     self.cycles_delay+=2; },
                 0xEC => { self.absolute();      self.cpx();     self.cycles_delay+=4; },
                 0xED => { self.absolute();      self.sbc();     self.cycles_delay+=4; },
                 0xEE => { self.absolute();      self.inc();     self.cycles_delay+=6; },

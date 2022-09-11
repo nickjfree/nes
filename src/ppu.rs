@@ -543,7 +543,7 @@ impl PPU {
             },
             // write oam dma
             OAMDMA => {
-                println!("oam dma");
+                // println!("oam dma");
             },
             _ => (),
         }
