@@ -155,8 +155,7 @@ impl CPUBus {
     // write data to bus
     // 
     // delay: some write may stale cpu, delay is returned 
-    pub fn write_u8(&mut self, addr: u16, data: u8) -> u32 {
-        let mut delayed_cycles = 0;
+    pub fn write_u8(&mut self, addr: u16, data: u8) {
         match addr {
             // internal_ram
             0x0000..=0x1fff => {
@@ -172,7 +171,11 @@ impl CPUBus {
             // oam dma
             0x4014 => {
                 // oam dma will stale cpu for 513+ cycles
-                delayed_cycles += self.ppu.borrow_mut().write_u8(addr, data);
+                if let Some(mem) = &mut self.internal_ram {
+                    let start = (data as u16 * 0x100) as usize;
+                    let src =  &mem[start..start+256];
+                    self.ppu.borrow_mut().oam_dma(src);
+                }
             },
             // apu registers
             0x4000..=0x4013 => {
@@ -205,7 +208,6 @@ impl CPUBus {
             },
             _ => (),
         }
-        delayed_cycles
     }
 
     // load test data into bus
@@ -234,6 +236,8 @@ pub struct CPU {
 
     // current opcode
     opcode: u8,
+    // cycles
+    cycles: u64,
     // cycles_delay
     cycles_delay: u32,
     // tmp operand address
@@ -264,7 +268,11 @@ impl CPU {
     }
 
     fn mem_write_u8(&mut self, addr: u16, val: u8) {
-        self.cycles_delay += self.bus.write_u8(addr, val)
+        self.bus.write_u8(addr, val);
+        // oam dma stale
+        if addr == 0x4014 {
+            self.cycles_delay += 513 + (self.cycles % 2) as u32;
+        }
     }
 
     fn push_u8(&mut self, val: u8) {
@@ -915,6 +923,8 @@ impl CPU {
 
     // step simulation
     pub fn tick(&mut self) -> u32 {
+
+        self.cycles = self.cycles.wrapping_add(1);
 
         if self.cycles_delay <= 0 {
             

@@ -76,7 +76,7 @@ impl Controller {
         result
     }
 
-    pub fn write_u8(&mut self, _addr: u16, val: u8) -> u32 {
+    pub fn write_u8(&mut self, _addr: u16, val: u8) {
         match val & 0x01 {
             0 => {
                 self.strobe = false;
@@ -86,6 +86,5 @@ impl Controller {
                 self.shift = 0x01;
             }
         }
-        0
     }
 }

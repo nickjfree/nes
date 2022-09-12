@@ -40,9 +40,8 @@ impl Ram {
         self.data[addr as usize]
     }
 
-    pub fn write_u8(&mut self, addr: u16, val: u8) -> u32 {
+    pub fn write_u8(&mut self, addr: u16, val: u8) {
         self.data[addr as usize] = val;
-        0
     }
 
     pub fn reset(&mut self) {
