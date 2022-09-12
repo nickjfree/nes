@@ -22,7 +22,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // nmi signal line
     let nmi = Signal::default();
     // load cartridge data
-    let cartridge = Cartridge::load("dk.nes").expect("load cartridge error");
+    let cartridge = Cartridge::load("roms/dk.nes").expect("load cartridge error");
     let cartridge = Rc::new(RefCell::new(cartridge));
     // controller
     let controller = Rc::new(RefCell::new(Controller::new()));

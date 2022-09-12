@@ -173,9 +173,6 @@ impl PPUBus {
             },
             0x2000..=0x3eff => {
                 // TODO:  implement mappers for nametable
-                // if addr - 0x2000 > 1024 {
-                //     panic!("{:#02x}", addr);
-                // }
                 self.name_table.read_u8((addr - 0x2000) % 1024)
             },
             0x3f00..=0x3fff => {
@@ -197,7 +194,7 @@ impl PPUBus {
                 self.name_table.write_u8((addr - 0x2000) % 1024, val);
             },
             0x3f00..=0x3fff => {
-                self.pallette.write_u8(addr - 0x3f00, val);
+                self.pallette.write_u8((addr - 0x3f00) % 32, val);
             },
             _ => panic!("write vram address {:#02x}", addr),
         }
@@ -486,7 +483,7 @@ impl PPU {
 
     // write ppu registers
     pub fn write_u8(&mut self, addr: u16, val: u8) {
-        //println!("PPU: write {:#02x} {:#02x} {:?}", addr, val, self.regs);
+        // println!("PPU: write {:#02x} {:#02x} {:?}", addr, val, self.regs);
         self.regs.bus_data = val;
         match addr {
             // write ppu ctrl
@@ -770,14 +767,14 @@ impl PPU {
                             self.ppu_bus.read_u8(0x3f00 + bg_palette_index as u16)
                         },
                         (1..=3, 1..=3, false) => {
-                            self.rs.sprite_0_hit = true;
+                            self.rs.sprite_0_hit = self.rs.show_background && self.rs.show_sprite;
                             self.ppu_bus.read_u8(0x3f00 + bg_palette_index as u16)
                         }
                         (0, 1..=3, _) => {
                             self.ppu_bus.read_u8(0x3f10 + sp_palette_index as u16)
                         },
                         (1..=3, 1..=3, true) => {
-                            self.rs.sprite_0_hit = true;
+                            self.rs.sprite_0_hit = self.rs.show_background && self.rs.show_sprite;
                             self.ppu_bus.read_u8(0x3f10 + sp_palette_index as u16)
                         }
                         _ => 0,
