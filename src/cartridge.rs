@@ -1,8 +1,13 @@
 
 use std::error::Error;
 use std::fs::File;
+use std::rc::Rc;
+use std::cell::RefCell;
 use byteorder::ReadBytesExt;
-use crate::board::Ram;
+use crate::board::Memory;
+use crate::mapper::{MirroMode, Mapper, NRom, PRG_BANK_SIZE, CHR_BANK_SIZE};
+
+
 
 // cartridge header
 #[derive(Default, Debug)]
@@ -34,14 +39,21 @@ impl CartridgeHeader {
 }
 
 // cartridge
-#[derive(Default, Debug)]
+#[derive(Default)]
 pub struct Cartridge {
     header: CartridgeHeader,
-    prg_roms: Vec<Ram>,
-    chr_roms: Vec<Ram>,
+    mapper: Option<Box<dyn Mapper>>,
 }
 
 impl Cartridge {
+
+    fn default() -> Self {
+        Self {
+            header: CartridgeHeader::default(),
+            mapper: None,
+        }
+    }
+
 
     // load cartridge data from reader
     fn read<T: ReadBytesExt>(reader: &mut T) -> Result<Self, Box<dyn Error>> {
@@ -49,17 +61,24 @@ impl Cartridge {
         let mut cartridge = Cartridge::default();
         let header = CartridgeHeader::read(reader)?;
 
-        for _n in 0..header.num_prg {
-            let mut ram = Ram::new(16 * 1024);
-            reader.read_exact(&mut ram)?;
-            cartridge.prg_roms.push(ram)
+        let mut prg: Memory = Memory::new(PRG_BANK_SIZE * 1);
+        let mut chr: Memory = Memory::new(CHR_BANK_SIZE * 1);
+        if header.num_prg > 0 {
+            prg = Memory::new(PRG_BANK_SIZE * header.num_prg as usize);
+            reader.read_exact(&mut prg)?;
         }
-        for _n in 0..header.num_chr {
-            let mut ram = Ram::new(8 * 1024);
-            reader.read_exact(&mut ram)?;
-            cartridge.chr_roms.push(ram)
+        if header.num_chr > 0 {
+            chr = Memory::new(CHR_BANK_SIZE * header.num_chr as usize);
+            reader.read_exact(&mut chr)?;
         }
+        let mirror_mode = match header.flag1 & 0x01 {
+            0 => MirroMode::Horizontal,
+            _ => MirroMode::Vertical,
+        };
         cartridge.header = header;
+        // we only create NROM for now
+        let mapper = NRom::new(prg, chr, mirror_mode);
+        cartridge.mapper = Some(Box::new(mapper));
         Ok(cartridge)
     }
 
@@ -70,19 +89,7 @@ impl Cartridge {
         Ok(cartridge)
     }
 
-    // get reference of program rom 
-    pub fn program(&self, index: usize) -> &Ram {
-        let index = index % self.prg_roms.len();
-        &self.prg_roms[index]
-    }
-
-    // get mutable reference of program rom 
-    pub fn program_mut(&mut self, index: usize) -> &mut Ram {
-        let index = index % self.prg_roms.len();
-        &mut self.prg_roms[index]
-    }
-
-    pub fn chr_mut(&mut self) -> &mut Ram {
-        &mut self.chr_roms[0]
+    pub fn to_mapper(self) -> Rc<RefCell<Box<dyn Mapper>>> {
+        Rc::new(RefCell::new(self.mapper.unwrap()))
     }
 }

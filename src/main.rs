@@ -22,15 +22,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     // nmi signal line
     let nmi = Signal::default();
     // load cartridge data
-    let cartridge = Cartridge::load("roms/dk.nes").expect("load cartridge error");
-    let cartridge = Rc::new(RefCell::new(cartridge));
+    let mapper = Cartridge::load("roms/smb.nes").expect("load cartridge error").to_mapper();
     // controller
     let controller = Rc::new(RefCell::new(Controller::new()));
     // create ppu
-    let ppu = PPU::new(Rc::clone(&cartridge), Rc::clone(&nmi));
+    let ppu = PPU::new(Rc::clone(&mapper), Rc::clone(&nmi));
     let ppu = Rc::new(RefCell::new(ppu));
     // create a cpu for test
-    let mut cpu = CPU::new(Rc::clone(&ppu), Rc::clone(&cartridge), Rc::clone(&controller), Rc::clone(&nmi));
+    let mut cpu = CPU::new(Rc::clone(&ppu), Rc::clone(&mapper), Rc::clone(&controller), Rc::clone(&nmi));
     cpu.power_up();
 
     // reset ppu

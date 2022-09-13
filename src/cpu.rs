@@ -2,9 +2,10 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::fmt;
 use crate::ppu::PPU;
-use crate::board::{ Ram, Signal };
-use crate::cartridge::Cartridge;
+use crate::board::{ Memory, Signal };
 use crate::controller::Controller;
+use crate::mapper::Mapper;
+
 
 // flags
 const STATUS_CARRAY  :u8 = 0x01;
@@ -43,10 +44,9 @@ impl fmt::Display for Registers {
 
 
 // the cpu bus
-#[derive(Default)]
 pub struct CPUBus {
     // 0000-07FF 2K * 4
-    internal_ram: Option<Ram>,
+    internal_ram: Option<Memory>,
     // 0800-0fff
     // 1000-17ff
     // 1800-1fff
@@ -56,14 +56,14 @@ pub struct CPUBus {
     // TODO: apu registers, 4000-401f
     // 4016-4017 controller
     controller: Rc<RefCell<Controller>>,
-    apu: Option<Ram>,
+    apu: Option<Memory>,
     // 4020-5fff 8K-20h
-    rom: Option<Ram>,
+    rom: Option<Memory>,
     // 6000-7fff 8K
-    sram: Option<Ram>,
+    sram: Option<Memory>,
     // 8000-bfff 16K
     // c000-ffff 16K
-    cartridge: Rc<RefCell<Cartridge>>,
+    mapper: Rc<RefCell<Box<dyn Mapper>>>,
 }
 
 
@@ -71,15 +71,15 @@ pub struct CPUBus {
 impl CPUBus {
 
     // new cpu bus
-    pub fn new(ppu: Rc<RefCell<PPU>>, cartridge: Rc<RefCell<Cartridge>>, controller: Rc<RefCell<Controller>>) -> Self {
+    pub fn new(ppu: Rc<RefCell<PPU>>, mapper: Rc<RefCell<Box<dyn Mapper>>>, controller: Rc<RefCell<Controller>>) -> Self {
         // internal ram
         Self {
-            internal_ram: Some(Ram::new(8192)),
+            internal_ram: Some(Memory::new(8192)),
             ppu: ppu,
-            apu: Some(Ram::new(32)),
-            rom: Some(Ram::new(8159)),
-            sram: Some(Ram::new(8192)),
-            cartridge: cartridge,
+            apu: Some(Memory::new(32)),
+            rom: Some(Memory::new(8159)),
+            sram: Some(Memory::new(8192)),
+            mapper: mapper,
             controller: controller,
         }
     }
@@ -133,13 +133,9 @@ impl CPUBus {
                     0
                 }
             },
-            // cartridge program 0
-            0x8000..=0xbfff => {
-                self.cartridge.borrow().program(0)[usize::from(addr-0x8000)]
-            },
-            // cartridge program 1
-            0xc000..=0xffff => {
-                self.cartridge.borrow().program(1)[usize::from(addr-0xc000)]
+            // cartridge program
+            0x8000..=0xffff => {
+                self.mapper.borrow_mut().read_u8(addr)
             },
              _ => 0,
         }
@@ -198,13 +194,9 @@ impl CPUBus {
                     mem[usize::from(addr-0x6000)] = data
                 }
             },
-            // cartridge program 0
-            0x8000..=0xbfff => {
-                self.cartridge.borrow_mut().program_mut(0)[usize::from(addr-0x8000)] = data
-            },
-            // cartridge program 1
-            0xc000..=0xffff => {
-                self.cartridge.borrow_mut().program_mut(1)[usize::from(addr-0xc000)] = data
+            // cartridge program
+            0x8000..=0xffff => {
+                self.mapper.borrow_mut().write_u8(addr, data);
             },
             _ => (),
         }
@@ -229,7 +221,6 @@ impl CPUBus {
 
 
 // cpu
-#[derive(Default)]
 pub struct CPU {
     // registers
     regs: Registers,  
@@ -253,11 +244,17 @@ pub struct CPU {
 
 impl CPU {
     // new cpu
-    pub fn new(ppu: Rc<RefCell<PPU>>, cartridge: Rc<RefCell<Cartridge>>, controller: Rc<RefCell<Controller>>, nmi: Signal) -> Self {
+    pub fn new(ppu: Rc<RefCell<PPU>>, mapper: Rc<RefCell<Box<dyn Mapper>>>, controller: Rc<RefCell<Controller>>, nmi: Signal) -> Self {
+
         Self {
-            bus: CPUBus::new(ppu, cartridge, controller),
+            regs: Registers::default(),
+            opcode: 0,
+            cycles: 0,
+            cycles_delay: 0,
+            op_addr: 0,
+            is_immediate: false,
+            bus: CPUBus::new(ppu, mapper, controller),
             nmi: nmi,
-            ..CPU::default()
         }
     }
 

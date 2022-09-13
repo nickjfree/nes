@@ -62,7 +62,11 @@ impl Controller {
     }
 
 
-    pub fn read_u8(&mut self, _addr: u16) -> u8 {
+    pub fn read_u8(&mut self, addr: u16) -> u8 {
+        if addr == 0x4017 {
+            // ignore second controller
+            return 0;
+        }
         let ret = match self.shift & self.data {
             0 => 0,
             _ => 1,
@@ -72,7 +76,6 @@ impl Controller {
             _ => ret,
         };
         self.shift <<= 1;
-        // println!("read controller ret {:#010b}", result);
         result
     }
 

@@ -1,8 +1,8 @@
 use std::ops::{Deref, DerefMut};
 use std::cell::RefCell;
 use std::rc::Rc;
-use crate::board::{ Ram, Signal };
-use crate::cartridge::Cartridge;
+use crate::board::{ Memory, Signal };
+use crate::mapper::Mapper;
 
 const PPUCTRL: u16    = 0x2000;
 const PPUMASK: u16    = 0x2001;
@@ -115,6 +115,7 @@ struct FetchedSprite {
     x: u8,
     front: bool,
     data: u32,
+    index: u8,
 }
 
 impl FetchedSprite {
@@ -145,35 +146,27 @@ impl FetchedSprite {
 // $3000-$3EFF  $0F00   Mirrors of $2000-$2EFF
 // $3F00-$3F1F  $0020   Palette RAM indexes
 // $3F20-$3FFF  $00E0   Mirrors of $3F00-$3F1F
-#[derive(Default)]
 struct PPUBus {
-    // let's start simple
-    // use ram first then change them to mappers
-    cartridge: Rc<RefCell<Cartridge>>,
-    name_table: Ram,
-    pallette: Ram,
+    // mapper as chr rom and name_table
+    mapper: Rc<RefCell<Box<dyn Mapper>>>,
+    pallette: Memory,
 }
+
 
 impl PPUBus {
 
-    pub fn new(cartridge: Rc<RefCell<Cartridge>>) -> Self {
+    pub fn new(mapper: Rc<RefCell<Box<dyn Mapper>>>) -> Self {
         Self {
-            cartridge: cartridge,
-            name_table: Ram::new(2048),
-            pallette: Ram::new(32),
+            mapper: mapper,
+            pallette: Memory::new(32),
         }
     }
 
     pub fn read_u8(&mut self, addr: u16) -> u8 {
         let addr = addr & 0x3fff;
         match addr {
-            0x0000..=0x1fff => {
-                // TODO:  implement mappers for chr
-                self.cartridge.borrow_mut().chr_mut().read_u8(addr)
-            },
-            0x2000..=0x3eff => {
-                // TODO:  implement mappers for nametable
-                self.name_table.read_u8((addr - 0x2000) % 1024)
+            0x0000..=0x3eff => {
+                self.mapper.borrow_mut().read_u8(addr)
             },
             0x3f00..=0x3fff => {
                 self.pallette.read_u8((addr - 0x3f00) % 32)
@@ -185,13 +178,8 @@ impl PPUBus {
     pub fn write_u8(&mut self, addr: u16, val: u8) {
         let addr = addr & 0x3fff;
         match addr {
-            0x0000..=0x1fff => {
-                // TODO:  implement mappers for nametable
-                self.cartridge.borrow_mut().chr_mut().write_u8(addr, val);
-            },
-            0x2000..=0x3eff => {
-                // TODO:  implement mappers for nametable
-                self.name_table.write_u8((addr - 0x2000) % 1024, val);
+            0x0000..=0x3eff => {
+                self.mapper.borrow_mut().write_u8(addr, val)
             },
             0x3f00..=0x3fff => {
                 self.pallette.write_u8((addr - 0x3f00) % 32, val);
@@ -339,7 +327,6 @@ impl RenderStatus {
 
 
 // ppu
-#[derive(Default)]
 pub struct PPU {
 
        
@@ -386,11 +373,20 @@ pub struct PPU {
 
 impl PPU {
 
-    pub fn new( cartridge: Rc<RefCell<Cartridge>>, nmi: Signal) -> Self {
+    pub fn new(mapper: Rc<RefCell<Box<dyn Mapper>>>, nmi: Signal) -> Self {
         Self{
+            background_table: 0,
+            sprite_table: 0,
+            nmi_enabled: false,
+            nmi_occurred: false,
+            nmi_prev: false,
+            vram_increment: 1,
+            sprite_size: 8,
+            rs: RenderStatus::default(),
+            regs: PPURegisters::default(),
             oam: OAM::new(64),
-            sprite_cache: vec![FetchedSprite{x: 0, data: 0, front: false}; 8],
-            ppu_bus: PPUBus::new(cartridge),
+            sprite_cache: vec![FetchedSprite{x: 0, data: 0, front: false, index: 0}; 8],
+            ppu_bus: PPUBus::new(mapper),
             output: vec![0; 256*240*3],
             palette_color: vec![
                  84,  84,  84,  0,     0,  30, 116, 0,    8,  16, 144, 0,     48,   0, 136, 0,    68,   0, 100, 0,    92,   0,  48, 0,    84,   4,   0, 0,    60,  24,   0, 0,     32,  42,   0, 0,      8,  58,   0, 0,     0,  64,   0,  0,    0,  60,   0, 0,     0,  50,  60, 0,    0,   0,   0, 0,   0, 0, 0, 0,  0, 0, 0, 0,  
@@ -399,7 +395,6 @@ impl PPU {
                 236, 238, 236,  0,   168, 204, 236, 0,  188, 188, 236, 0,    212, 178, 236, 0,   236, 174, 236, 0,   236, 174, 212, 0,   236, 180, 176, 0,   228, 196, 144, 0,    204, 210, 120, 0,    180, 222, 120, 0,   168, 226, 144,  0,  152, 226, 180, 0,   160, 214, 228, 0,  160, 162, 160, 0,   0, 0, 0, 0,  0, 0, 0, 0,  
             ],
             nmi: nmi,
-            ..PPU::default()
         }
     }
 
@@ -697,6 +692,7 @@ impl PPU {
             x: sprite.x(),
             data: data,
             front: sprite.front(),
+            index: n as u8,
         };
         self.sprite_cache[index as usize] = fetched;
     }
@@ -708,6 +704,7 @@ impl PPU {
                 x: 0xff,
                 data: 0,
                 front: false,
+                index: 0,
             };
         }
         // fill it with next line sprite
@@ -723,7 +720,7 @@ impl PPU {
             if count < 8 {
                self.fetch_sprite(n, row, count);
             }
-            if count > 8 {
+            if count >= 8 {
                self.rs.sprite_overflow = true;
                break
             }
@@ -731,15 +728,15 @@ impl PPU {
         }
     }
 
-    fn get_sprite_color(&self) -> (u8, bool) {
+    fn get_sprite_color(&self) -> (u8, bool, u8) {
         let cycle = self.rs.cycle - 1;
         for i in 0..8 {
             let color = self.sprite_cache[i].fetch(cycle);
             if color & 0x03 != 0 {
-                return (color, self.sprite_cache[i].front())
+                return (color, self.sprite_cache[i].front(), self.sprite_cache[i].index);
             }
         }
-        (0, false)
+        (0, false, 0)
     }
 
     fn get_background_color(&self) -> u8 {
@@ -761,20 +758,20 @@ impl PPU {
             match (scanline, cycle) {
                 (0..=239, 1..=256) => {
                     let bg_palette_index = self.get_background_color();
-                    let (sp_palette_index, front_sprite) = self.get_sprite_color();
-                    let color_index = match (bg_palette_index & 0x03, sp_palette_index & 0x03, front_sprite) {
-                        (0, 0, _) | (1..=3, 0, _) => {
+                    let (sp_palette_index, front_sprite, index) = self.get_sprite_color();
+                    let color_index = match (bg_palette_index & 0x03, sp_palette_index & 0x03, front_sprite, index) {
+                        (0, 0, _, _) | (1..=3, 0, _, _) => {
                             self.ppu_bus.read_u8(0x3f00 + bg_palette_index as u16)
                         },
-                        (1..=3, 1..=3, false) => {
-                            self.rs.sprite_0_hit = self.rs.show_background && self.rs.show_sprite;
+                        (1..=3, 1..=3, false, index) => {
+                            self.rs.sprite_0_hit = self.rs.show_background && self.rs.show_sprite && index == 0 && cycle != 256;
                             self.ppu_bus.read_u8(0x3f00 + bg_palette_index as u16)
                         }
-                        (0, 1..=3, _) => {
+                        (0, 1..=3, _, _) => {
                             self.ppu_bus.read_u8(0x3f10 + sp_palette_index as u16)
                         },
-                        (1..=3, 1..=3, true) => {
-                            self.rs.sprite_0_hit = self.rs.show_background && self.rs.show_sprite;
+                        (1..=3, 1..=3, true, index) => {
+                            self.rs.sprite_0_hit = self.rs.show_background && self.rs.show_sprite && index == 0 && cycle != 256;
                             self.ppu_bus.read_u8(0x3f10 + sp_palette_index as u16)
                         }
                         _ => 0,

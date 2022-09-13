@@ -5,12 +5,12 @@ use std::rc::Rc;
 
 // memory
 #[derive(Default, Debug)]
-pub struct Ram {
+pub struct Memory {
     data: Vec<u8>,
 }
 
 
-impl Ram {
+impl Memory {
     pub fn new(size: usize) -> Self {
         Self {
             data: vec![0; size],
@@ -18,7 +18,7 @@ impl Ram {
     }
 }
 
-impl Deref for Ram {
+impl Deref for Memory {
 
     type Target = [u8];
 
@@ -27,14 +27,14 @@ impl Deref for Ram {
     }
 }
 
-impl DerefMut for Ram {
+impl DerefMut for Memory {
 
     fn deref_mut(&mut self) -> &mut [u8] {
         &mut self.data
     }
 }
 
-impl Ram {
+impl Memory {
 
     pub fn read_u8(&mut self, addr: u16) -> u8 {
         self.data[addr as usize]
@@ -46,6 +46,10 @@ impl Ram {
 
     pub fn reset(&mut self) {
         self.data.iter_mut().map(|x| *x = 0).count();
+    }
+
+    pub fn size(&self) -> usize {
+        self.data.len()
     }
 }
 
