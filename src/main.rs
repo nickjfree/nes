@@ -22,7 +22,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // nmi signal line
     let nmi = Signal::default();
     // load cartridge data
-    let mapper = Cartridge::load("roms/smb.nes").expect("load cartridge error").to_mapper();
+    let mapper = Cartridge::load("roms/Super Mario Bros. (World).nes").expect("load cartridge error").to_mapper();
     // controller
     let controller = Rc::new(RefCell::new(Controller::new()));
     // create ppu
@@ -110,8 +110,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             canvas.copy(&texture, None, None)?;
             canvas.present();
         }
-        ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 120));
+        // ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 120));
     }
-    println!("byte!");
+    println!("bye!");
     Ok(())
 }

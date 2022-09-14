@@ -169,7 +169,13 @@ impl PPUBus {
                 self.mapper.borrow_mut().read_u8(addr)
             },
             0x3f00..=0x3fff => {
-                self.pallette.read_u8((addr - 0x3f00) % 32)
+                // mirror: 3f10 3f14 3f18 3f1c mirror to 3f00 3f04 3f08 3f0c
+                // TODO: background palette hack
+                let addr = match addr & 0x03 {
+                    0 => addr & 0x0f,
+                    _ => addr & 0x1f,
+                };
+                self.pallette.read_u8(addr)
             },
             _ => panic!("read vram address {:#02x}", addr),
         }
@@ -182,7 +188,11 @@ impl PPUBus {
                 self.mapper.borrow_mut().write_u8(addr, val)
             },
             0x3f00..=0x3fff => {
-                self.pallette.write_u8((addr - 0x3f00) % 32, val);
+                let addr = match addr & 0x03 {
+                    0 => addr & 0x0f,
+                    _ => addr & 0x1f,
+                };
+                self.pallette.write_u8(addr & 0x1f, val);
             },
             _ => panic!("write vram address {:#02x}", addr),
         }
@@ -292,6 +302,8 @@ struct RenderStatus {
     tile_high: u8,
     // shift register for 2 tiles, with pallette index
     tile_data: u64,
+    // debug
+    nmi_frame: u32,
 }
 
 
@@ -543,6 +555,7 @@ impl PPU {
             },
             // write ppu scroll
             PPUSCROLL => {   
+                // println!("PPU: write {:#02x} {:#02x} {:?}", addr, val, self.rs.scanline);
                 let val = val as u16;
                 match self.regs.w {
                     0 => {
@@ -720,16 +733,23 @@ impl PPU {
             if count < 8 {
                self.fetch_sprite(n, row, count);
             }
-            if count >= 8 {
+            count += 1;
+            if count > 8 {
+                if self.rs.sprite_overflow == false {
+                    // println!("overflow at {:?}", self.rs);
+                }
                self.rs.sprite_overflow = true;
                break
             }
-            count += 1
+
         }
     }
 
     fn get_sprite_color(&self) -> (u8, bool, u8) {
         let cycle = self.rs.cycle - 1;
+        if self.rs.scanline == 0 {
+           return (0, false, 0);
+        } 
         for i in 0..8 {
             let color = self.sprite_cache[i].fetch(cycle);
             if color & 0x03 != 0 {
@@ -740,7 +760,12 @@ impl PPU {
     }
 
     fn get_background_color(&self) -> u8 {
-        ((self.rs.tile_data >> (60 - self.regs.x * 4)) & 0x0f) as u8
+        let bg = ((self.rs.tile_data >> (60 - self.regs.x * 4)) & 0x0f) as u8;
+        if bg & 0x03 == 0 {
+            0
+        } else {
+            bg
+        }
     }
 
     // color index to color
@@ -759,23 +784,24 @@ impl PPU {
                 (0..=239, 1..=256) => {
                     let bg_palette_index = self.get_background_color();
                     let (sp_palette_index, front_sprite, index) = self.get_sprite_color();
-                    let color_index = match (bg_palette_index & 0x03, sp_palette_index & 0x03, front_sprite, index) {
-                        (0, 0, _, _) | (1..=3, 0, _, _) => {
+                    let maybe_zero_hit = self.rs.show_background && self.rs.show_sprite && index == 0 && cycle != 256;
+                    let color_index = match (bg_palette_index & 0x03, sp_palette_index & 0x03, front_sprite) {
+                        (0, 0, _) | (1..=3, 0, _) => {
                             self.ppu_bus.read_u8(0x3f00 + bg_palette_index as u16)
                         },
-                        (1..=3, 1..=3, false, index) => {
-                            self.rs.sprite_0_hit = self.rs.show_background && self.rs.show_sprite && index == 0 && cycle != 256;
+                        (1..=3, 1..=3, false) => {
+                            self.rs.sprite_0_hit = self.rs.sprite_0_hit || maybe_zero_hit;
                             self.ppu_bus.read_u8(0x3f00 + bg_palette_index as u16)
                         }
-                        (0, 1..=3, _, _) => {
+                        (0, 1..=3, _) => {
                             self.ppu_bus.read_u8(0x3f10 + sp_palette_index as u16)
                         },
-                        (1..=3, 1..=3, true, index) => {
-                            self.rs.sprite_0_hit = self.rs.show_background && self.rs.show_sprite && index == 0 && cycle != 256;
+                        (1..=3, 1..=3, true) => {
+                            self.rs.sprite_0_hit = self.rs.sprite_0_hit || maybe_zero_hit;
                             self.ppu_bus.read_u8(0x3f10 + sp_palette_index as u16)
                         }
                         _ => 0,
-                    }; 
+                    };
                     let color = self.get_color(color_index);
                     // set output
                     let (x, y) = (cycle as u32 - 1, scanline as u32);
@@ -832,6 +858,7 @@ impl PPU {
                 self.nmi_occurred = true;
             },
             (261, 1) => {
+                // println!("pre {:?}", self.rs);
                 self.nmi_occurred = false;
                 self.rs.sprite_overflow = false;
                 self.rs.sprite_0_hit = false;
@@ -844,6 +871,7 @@ impl PPU {
     fn update_nmi(&mut self) {
         let nmi_current = self.nmi_occurred && self.nmi_enabled;
         if nmi_current && !self.nmi_prev {
+            self.rs.nmi_frame = self.rs.frame_number;
             *self.nmi.borrow_mut() = 1;
         }
         self.nmi_prev = nmi_current;
