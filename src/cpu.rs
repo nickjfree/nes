@@ -86,7 +86,6 @@ impl CPUBus {
 
     // load address
     pub fn read_u8(&self, addr: u16) -> u8 {
-        // println!("read {:#02x}", addr);
 
         match addr {
             // internal_ram

@@ -22,7 +22,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // nmi signal line
     let nmi = Signal::default();
     // load cartridge data
-    let mapper = Cartridge::load("roms/Super Mario Bros. (World).nes").expect("load cartridge error").to_mapper();
+    let mapper = Cartridge::load("roms/Contra (U).nes").expect("load cartridge error").to_mapper();
     // controller
     let controller = Rc::new(RefCell::new(Controller::new()));
     // create ppu

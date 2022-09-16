@@ -3,10 +3,10 @@ use std::error::Error;
 use std::fs::File;
 use std::rc::Rc;
 use std::cell::RefCell;
+use std::fmt;
 use byteorder::ReadBytesExt;
 use crate::board::Memory;
-use crate::mapper::{MirroMode, Mapper, NRom, PRG_BANK_SIZE, CHR_BANK_SIZE};
-
+use crate::mapper::{MirroMode, Mapper, NRom, UNRom, PRG_BANK_SIZE, CHR_BANK_SIZE};
 
 
 // cartridge header
@@ -38,6 +38,21 @@ impl CartridgeHeader {
     }
 }
 
+impl fmt::Display for CartridgeHeader {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mirror = match self.flag1 & 0x01 {
+            0 => "h",
+            _ => "v",
+        };
+        let mapper_number = ((self.flag1 >> 4) & 0x0f) | (self.flag2 & 0xf0);
+        let has_trainer = self.flag1 & 0x04 != 0;
+
+        write!(f, "prg: {}K, chr: {}K, trainer: {}, mirror: {}, mapper: {}",
+            self.num_prg * 16, self.num_chr * 8, has_trainer, mirror, mapper_number)?;
+        Ok(())
+    }
+}
+
 // cartridge
 #[derive(Default)]
 pub struct Cartridge {
@@ -61,6 +76,8 @@ impl Cartridge {
         let mut cartridge = Cartridge::default();
         let header = CartridgeHeader::read(reader)?;
 
+        println!("cartridge info {}", header);
+
         let mut prg: Memory = Memory::new(PRG_BANK_SIZE * 1);
         let mut chr: Memory = Memory::new(CHR_BANK_SIZE * 1);
         if header.num_prg > 0 {
@@ -75,10 +92,16 @@ impl Cartridge {
             0 => MirroMode::Horizontal,
             _ => MirroMode::Vertical,
         };
+        // get mapper id
+        let mapper_number = ((header.flag1 >> 4) & 0x0f) | (header.flag2 & 0xf0);
         cartridge.header = header;
-        // we only create NROM for now
-        let mapper = NRom::new(prg, chr, mirror_mode);
-        cartridge.mapper = Some(Box::new(mapper));
+
+        let mapper: Box<dyn Mapper> = match mapper_number {
+            0 => Box::new(NRom::new(prg, chr, mirror_mode)),
+            2 => Box::new(UNRom::new(prg, chr, mirror_mode)),
+            _ => panic!("unsupported mapper {}", mapper_number),
+        };
+        cartridge.mapper = Some(mapper);
         Ok(cartridge)
     }
 
