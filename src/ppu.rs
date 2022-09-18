@@ -302,6 +302,11 @@ struct RenderStatus {
     tile_high: u8,
     // shift register for 2 tiles, with pallette index
     tile_data: u64,
+
+    // nmi suppress timer
+    nmi_suppress_timer: u32,
+    // nmi_occurred_timer  
+    nmi_occurred_timer: u32,
     // debug
     nmi_frame: u32,
 }
@@ -330,6 +335,14 @@ impl RenderStatus {
                 self.frame_number = self.frame_number.wrapping_add(1);
                 return true
             }
+        }
+        // dec nmi suppress timer
+        if self.nmi_suppress_timer > 0 {
+            self.nmi_suppress_timer -= 1;
+        }
+        // dec nnmi_occurred_timer
+        if self.nmi_occurred_timer > 0 {
+            self.nmi_occurred_timer -= 1;
         }
         false
     }
@@ -449,33 +462,35 @@ impl PPU {
                 self.regs.w = 0;
                 // read this will clear nmi
                 self.nmi_occurred = false;
+                self.rs.nmi_suppress_timer = 2;
                 ret
             },
             // read oam data
             OAMDATA => {
-                0
+                let n: usize = usize::from((self.regs.oam_addr >> 2) & 0x3f);
+                let m: usize = usize::from(self.regs.oam_addr & 0x03);
+                self.oam[n][m]
             },
             // read ppu vram data
             PPUDATA => {
                 let ret;
-                let data = self.ppu_bus.read_u8(self.regs.v);
-
                 // When reading while the VRAM address is in the range 0-$3EFF (i.e., before the palettes), the read will return the contents of an internal read buffer. 
                 // This internal buffer is updated only when reading PPUDATA, and so is preserved across frames. 
                 // After the CPU reads and gets the contents of the internal buffer, the PPU will immediately update the internal buffer with the byte at the current VRAM address. 
                 // Thus, after setting the VRAM address, one should first read this register to prime the pipeline and discard the result.
                 // Reading palette data from $3F00-$3FFF works differently. The palette data is placed immediately on the data bus, and hence no priming read is required. 
                 //Reading the palettes still updates the internal buffer though, but the data placed in it is the mirrored nametable data that would appear "underneath" the palette. (Checking the PPU memory map should make this clearer.)
-                match self.regs.v & 0x7fff {
+                match self.regs.v & 0x3fff {
                     // buffered
                     0x0000..=0x3eff => {
                         ret = self.regs.vram_read_buffer;
-                        self.regs.vram_read_buffer = data;
+                        self.regs.vram_read_buffer = self.ppu_bus.read_u8(self.regs.v);
                     },
                     // not buffered
                     0x3f00..=0x3fff => {
-                        ret = data;
-                        self.regs.vram_read_buffer = data;
+                        ret = self.ppu_bus.read_u8(self.regs.v);
+                        // the buffered data is nametable mirror
+                        self.regs.vram_read_buffer = self.ppu_bus.read_u8((self.regs.v - 0x2000) % 4096 + 0x2000);
                     },
                     _ => panic!("read vram address {:#02x}", self.regs.v),
                 }
@@ -548,8 +563,8 @@ impl PPU {
             },
             // write ppu oam data
             OAMDATA => {
-                let n: usize = usize::from((self.regs.oam_addr >> 2) & 0x0f);
-                let m: usize = usize::from(self.regs.oam_addr & 0x0f);
+                let n: usize = usize::from((self.regs.oam_addr >> 2) & 0x3f);
+                let m: usize = usize::from(self.regs.oam_addr & 0x03);
                 self.oam[n][m] = val;
                 self.regs.oam_addr = self.regs.oam_addr.wrapping_add(1);
             },
@@ -578,6 +593,7 @@ impl PPU {
             },
             // write vram addr
             PPUADDR => {
+                // println!("PPU: write {:#06x} {:#06x} {:?}", addr, val, self.regs);
                 let val = val as u16;
                 match self.regs.w {
                    
@@ -611,10 +627,13 @@ impl PPU {
     }
 
     pub fn oam_dma(&mut self, data: &[u8]) {
-        data.iter().enumerate().for_each(|(i, d)| {
-            let n = i / 4;
-            let m = i % 4;
-            self.oam[n][m] = *d;
+
+        let mut oam_addr: u8 = self.regs.oam_addr;
+        data.iter().for_each(|x| {
+            let n: usize = usize::from((oam_addr >> 2) & 0x3f);
+            let m: usize = usize::from(oam_addr & 0x03);
+            self.oam[n][m] = *x;
+            oam_addr = oam_addr.wrapping_add(1);
         });
     }
 
@@ -741,7 +760,6 @@ impl PPU {
                self.rs.sprite_overflow = true;
                break
             }
-
         }
     }
 
@@ -834,6 +852,10 @@ impl PPU {
                     // sprite_evaluation for the next line
                     self.sprite_evaluation();
                 },
+                (0..=239 | 261, 257..=320) => {
+                    // set oam to 0
+                    self.regs.oam_addr = 0;
+                },
                 _ => (),
             }
             // pre-line fetch logic
@@ -842,7 +864,7 @@ impl PPU {
                 (0..=239 | 261, 256) => self.regs.inc_vert_v(),
                 (261, 280..=304) => self.regs.copy_vert_t(),
                 (261, 339) => {
-                    if self.rs.is_odd_frame() {
+                    if self.rs.is_odd_frame() && self.rs.show_background {
                         // skip cycle on odd frams
                         self.rs.inc_cycle();
                     }
@@ -855,7 +877,8 @@ impl PPU {
     fn vblank_cycle_update(&mut self) {
         match (self.rs.scanline, self.rs.cycle) {
             (241, 1) => {
-                self.nmi_occurred = true;
+                self.nmi_occurred = self.rs.nmi_suppress_timer == 0;
+                self.rs.nmi_occurred_timer = 2;
             },
             (261, 1) => {
                 // println!("pre {:?}", self.rs);
@@ -869,7 +892,7 @@ impl PPU {
 
     // update nmi status
     fn update_nmi(&mut self) {
-        let nmi_current = self.nmi_occurred && self.nmi_enabled;
+        let nmi_current = self.nmi_occurred && self.nmi_enabled && self.rs.nmi_occurred_timer == 0;
         if nmi_current && !self.nmi_prev {
             self.rs.nmi_frame = self.rs.frame_number;
             *self.nmi.borrow_mut() = 1;
@@ -884,7 +907,7 @@ impl PPU {
         self.update_nmi();
         match self.rs.inc_cycle() {
             true => {
-                // println!("{:?}", (self.rs.scanline, self.rs.cycle));
+                //println!("{:?}", (self.rs.scanline, self.rs.cycle));
                 1
             },
             _ => 0,

@@ -106,7 +106,8 @@ impl Mapper for NRom {
 
 	fn write_u8(&mut self, addr: u16, val: u8) {
 		match addr {
-			0x0000..=0x1fff => (),
+			// some nrom rom has CHR ram. so make CHR writable
+			0x0000..=0x1fff => self.chr.write_u8(addr, val),
 			0x2000..=0x3eff => self.name_table.write_u8(addr - 0x2000, val),
 			0x8000..=0xffff => {
 				let addr = addr % (self.prg.size() as u16);

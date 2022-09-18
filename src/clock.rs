@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 
 // 559 us per cycle
 const CPU_CYCLE: u128 = 559;
+//const CPU_CYCLE: u128 = 100;
 
 
 pub struct Clock {
