@@ -3,7 +3,7 @@ extern crate sdl2;
 use std::error::Error;
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::time::{Duration, Instant};
+// use std::time::{Duration, Instant};
 use sdl2::pixels::{Color, PixelFormatEnum};
 use sdl2::event::Event;
 
@@ -22,7 +22,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // nmi signal line
     let nmi = Signal::default();
     // load cartridge data
-    let mapper = Cartridge::load("/mnt/f/proj/nes/roms/Contra (U).nes").expect("load cartridge error").to_mapper();
+    let mapper = Cartridge::load("roms/Contra (U).nes").expect("load cartridge error").to_mapper();
     // controller
     let controller = Rc::new(RefCell::new(Controller::new()));
     // create ppu
@@ -50,7 +50,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .build()
         .unwrap();
 
-    let mut canvas = window.into_canvas().accelerated().build().unwrap();
+    let mut canvas = window.into_canvas().accelerated().present_vsync().build().unwrap();
     canvas.set_draw_color(Color::RGB(0, 0, 0));
     canvas.clear();
     canvas.present();
@@ -64,7 +64,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let mut event_pump = sdl_context.event_pump().unwrap();
 
-    let mut prev_time = Instant::now();
+    // let mut prev_time = Instant::now();
     // game loop
     'running: loop {
         // handle key event
@@ -112,8 +112,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             canvas.clear();
             canvas.copy(&texture, None, None)?;
             canvas.present();
-            println!("{:?} {}", prev_time.elapsed().as_millis(), cycles);
-            prev_time = Instant::now();
+            // println!("{:?} {}", prev_time.elapsed().as_millis(), cycles);
+            // prev_time = Instant::now();
         }
         //::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 120));
     }
