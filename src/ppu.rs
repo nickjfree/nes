@@ -242,7 +242,7 @@ impl PPURegisters {
                 self.v &= !0x7000; 
                 let y = (self.v & 0x03e0)  >> 5;
                 let coarse_y = match y {
-                    29 => {self.v ^= 0x8000; 0},
+                    29 => {self.v ^= 0x0800; 0},
                     31 => 0,
                     _ => y.wrapping_add(1),
                 };
@@ -582,10 +582,10 @@ impl PPU {
                         self.regs.w = 1;
                     },
                     1 => {
-                        //     10001100 00011111
-                        //  t: FGH..AB CDE..... <- d: ABCDEFGH
+                        //    10001100 00011111
+                        //  t:.FGH..AB CDE..... <- d: ABCDEFGH
                         //  w:                  <- 0
-                        self.regs.t = (self.regs.t & 0x8c1f) | ((val & 0xf8) << 2) | (val & 0x07 << 12);
+                        self.regs.t = (self.regs.t & 0x8c1f) | ((val & 0xf8) << 2) | ((val & 0x07) << 12);
                         self.regs.w = 0;
                     },
                     _ => (),
