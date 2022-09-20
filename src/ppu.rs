@@ -112,24 +112,41 @@ impl DerefMut for OAM {
 
 #[derive(Default, Copy, Clone)]
 struct FetchedSprite {
-    x: u8,
-    front: bool,
     data: u32,
-    index: u8,
+    sprite: [u8; 4],
+    row: u8,
+    sprite_index: u8,
+    dummy: bool,
 }
 
 impl FetchedSprite {
+
+    fn default() -> Self {
+        Self {
+            data: 0,
+            sprite: [0, 255, 0, 0],
+            row: 0,
+            sprite_index: 255,
+            dummy: true,
+        }
+    }
+
     fn fetch(&self, cycle: u16) -> u8 {
-        let d = cycle.wrapping_sub(self.x as u16);
+        let d = cycle.wrapping_sub(self.x() as u16);
         if d < 8 {
             ((self.data >> ((7 - d) * 4)) & 0x0f) as u8
         } else {
             0
         }
     }
+}
 
-    fn front(&self) -> bool {
-        self.front
+impl Deref for FetchedSprite {
+
+    type Target = [u8; 4];
+
+    fn deref(&self) -> &Self::Target {
+        &self.sprite
     }
 }
 
@@ -410,7 +427,7 @@ impl PPU {
             rs: RenderStatus::default(),
             regs: PPURegisters::default(),
             oam: OAM::new(64),
-            sprite_cache: vec![FetchedSprite{x: 0, data: 0, front: false, index: 0}; 8],
+            sprite_cache: vec![FetchedSprite::default(); 8],
             ppu_bus: PPUBus::new(mapper),
             output: vec![0; 256*240*3],
             palette_color: vec![
@@ -665,7 +682,7 @@ impl PPU {
         let fine_y = (self.regs.v >> 12) & 0x07;
         let index = self.rs.tile_index as u16;
         let addr = self.background_table.wrapping_add((index << 4) | fine_y);
-        self.rs.tile_low = self.ppu_bus.read_u8(addr) ;
+        self.rs.tile_low = self.ppu_bus.read_u8(addr);
     }
 
     fn fetch_bg_tile_high(&mut self) {
@@ -673,6 +690,10 @@ impl PPU {
         let index = self.rs.tile_index as u16;
         let addr = self.background_table.wrapping_add((index << 4) | 0x08 | fine_y );
         self.rs.tile_high = self.ppu_bus.read_u8(addr);
+        
+    }
+
+    fn store_shift_register(&mut self) {
         let mut data: u64 = 0;
         // store data to shift registers
         for i in 0..8 {
@@ -684,21 +705,19 @@ impl PPU {
         self.rs.tile_data |= data;
     }
 
-    // fetch sprite data to cache
-    fn fetch_sprite(&mut self, n: usize, row: u16, index: usize) {
-        let sprite = self.oam[n];
+    // fetch sprite low byte
+    fn fetch_sp_tile_low(&mut self, cache_index: usize) {
+        let sprite = self.sprite_cache[cache_index];
         let h = self.sprite_size as u16;
         let mut tile_index: u16;
-        let mut row = row;
+        let mut row = sprite.row as u16;
         if sprite.flip_v() {
             row = h - row - 1;
         }
-        let addr_high: u16;
-        let addr_low: u16;
+        let addr: u16;
         if h == 8 {
             tile_index = sprite.pattern_index() as u16;
-            addr_low = self.sprite_table.wrapping_add((tile_index << 4) | row);
-            addr_high = self.sprite_table.wrapping_add((tile_index << 4) | 0x08| row);
+            addr = self.sprite_table.wrapping_add((tile_index << 4) | row);
         } else {
             tile_index = (sprite.pattern_index() & 0xfe) as u16;
             let table = sprite.bank_addr();
@@ -706,11 +725,43 @@ impl PPU {
                 tile_index += 1;
                 row -= 8;
             }
-            addr_low = table.wrapping_add((tile_index << 4) | row);
-            addr_high =  table.wrapping_add((tile_index << 4) | 0x08| row);
+            addr = table.wrapping_add((tile_index << 4) | row);
         }
-        let data_low = self.ppu_bus.read_u8(addr_low);
-        let data_high = self.ppu_bus.read_u8(addr_high);
+        self.rs.tile_low = self.ppu_bus.read_u8(addr);
+    }
+
+    // fetch sprite high byte
+    fn fetch_sp_tile_high(&mut self, cache_index: usize) {
+        let sprite = self.sprite_cache[cache_index];
+        let h = self.sprite_size as u16;
+        let mut tile_index: u16;
+        let mut row = sprite.row as u16;
+        if sprite.flip_v() {
+            row = h - row - 1;
+        }
+        let addr: u16;
+        if h == 8 {
+            tile_index = sprite.pattern_index() as u16;
+            addr = self.sprite_table.wrapping_add((tile_index << 4) |  0x08 | row);
+        } else {
+            tile_index = (sprite.pattern_index() & 0xfe) as u16;
+            let table = sprite.bank_addr();
+            if row > 7 {
+                tile_index += 1;
+                row -= 8;
+            }
+            addr = table.wrapping_add((tile_index << 4) |  0x08 | row);
+        }
+        self.rs.tile_high = self.ppu_bus.read_u8(addr);
+    }
+
+    // store fetch sprite data
+    fn store_sprite_data(&mut self, cache_index: usize) {
+        let mut sprite = &mut self.sprite_cache[cache_index];
+        // store 0 for left over sprites
+        if sprite.dummy {
+            return;
+        }
         let mut data: u32 = 0;
         for i in 0..8 {
             let shift: u8 = match sprite.flip_h() {
@@ -718,26 +769,15 @@ impl PPU {
                 false => 7-i,
             };
             data <<= 4;
-            data |= (((data_high >> shift) << 1) & 0x02 | (data_low >> shift) & 0x01 | sprite.pallette_index()) as u32;
+            data |= (((self.rs.tile_high >> shift) << 1) & 0x02 | (self.rs.tile_low >> shift) & 0x01 | sprite.pallette_index()) as u32;
         }
-        let fetched = FetchedSprite{
-            x: sprite.x(),
-            data: data,
-            front: sprite.front(),
-            index: n as u8,
-        };
-        self.sprite_cache[index as usize] = fetched;
+        sprite.data = data;
     }
 
     fn sprite_evaluation(&mut self) {
         // clear secondary_oam oam
         for sp in self.sprite_cache.iter_mut() {
-            *sp = FetchedSprite{
-                x: 0xff,
-                data: 0,
-                front: false,
-                index: 0,
-            };
+            *sp = FetchedSprite::default();
         }
         // fill it with next line sprite
         let scanline = self.rs.scanline;
@@ -750,7 +790,13 @@ impl PPU {
                 continue
             }
             if count < 8 {
-               self.fetch_sprite(n, row, count);
+                self.sprite_cache[count] = FetchedSprite{
+                    data: 0,
+                    sprite_index: n as u8,
+                    row: row as u8,
+                    sprite: sprite,
+                    dummy: false,
+                }
             }
             count += 1;
             if count > 8 {
@@ -771,7 +817,7 @@ impl PPU {
         for i in 0..8 {
             let color = self.sprite_cache[i].fetch(cycle);
             if color & 0x03 != 0 {
-                return (color, self.sprite_cache[i].front(), self.sprite_cache[i].index);
+                return (color, self.sprite_cache[i].front(), self.sprite_cache[i].sprite_index);
             }
         }
         (0, false, 0)
@@ -838,9 +884,17 @@ impl PPU {
                     self.rs.tile_data <<= 4;
                     match cycle % 8 {
                         2 => self.fetch_nt(),
-                        4 => self.fetch_at(),
-                        6 => self.fetch_bg_tile_low(),
-                        0 => { self.fetch_bg_tile_high(); self.regs.inc_hori_v();},
+                        4 => { 
+                            self.fetch_at();
+                            // the actual read finished at cycle 6, but address bus is set at cycle 4
+                            // we read here, becuase some maapers depend on the address bus behavior. eg. MMC3 A12
+                            self.fetch_bg_tile_low(); 
+                        },
+                        6 => self.fetch_bg_tile_high(),
+                        0 => { 
+                            self.store_shift_register(); 
+                            self.regs.inc_hori_v();
+                        },
                         _ => (),
                     }
                 },
@@ -855,6 +909,18 @@ impl PPU {
                 (0..=239 | 261, 257..=320) => {
                     // set oam to 0
                     self.regs.oam_addr = 0;
+                    let index = (((cycle - 1) >> 3) & 0x07) as usize;
+                    match cycle % 8 {
+                        4 => { 
+                            self.fetch_at();
+                            // the actual read finished at cycle 6, but address bus is set at cycle 4
+                            // we read here, becuase some maapers depend on the address bus behavior. eg. MMC3 A12
+                            self.fetch_sp_tile_low(index); 
+                        },
+                        6 => self.fetch_sp_tile_high(index),
+                        0 => self.store_sprite_data(index),
+                        _ => (),
+                    }
                 },
                 _ => (),
             }
