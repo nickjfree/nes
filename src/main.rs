@@ -21,8 +21,11 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // nmi signal line
     let nmi = Signal::default();
+    // irq signal line
+    let irq = Signal::default();
+
     // load cartridge data
-    let mapper = Cartridge::load("roms/Contra (U).nes").expect("load cartridge error").to_mapper();
+    let mapper = Cartridge::load("roms/Ninja Gaiden 3 - The Ancient Ship of Doom (U).nes", Rc::clone(&irq)).expect("load cartridge error").to_mapper();
     // let mapper = Cartridge::load("../nes-test-roms/stress/NEStress.nes").expect("load cartridge error").to_mapper();
     // controller
     let controller = Rc::new(RefCell::new(Controller::new()));
@@ -30,7 +33,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let ppu = PPU::new(Rc::clone(&mapper), Rc::clone(&nmi));
     let ppu = Rc::new(RefCell::new(ppu));
     // create a cpu for test
-    let mut cpu = CPU::new(Rc::clone(&ppu), Rc::clone(&mapper), Rc::clone(&controller), Rc::clone(&nmi));
+    let mut cpu = CPU::new(Rc::clone(&ppu), Rc::clone(&mapper), Rc::clone(&controller), Rc::clone(&nmi), Rc::clone(&irq));
     cpu.power_up();
 
     // reset ppu

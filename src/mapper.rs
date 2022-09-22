@@ -1,5 +1,7 @@
 use std::fmt::Debug;
 use crate::board::Memory;
+use crate::board::{ Signal };
+
 
 pub const PRG_BANK_SIZE: usize = 16 * 1024;
 pub const CHR_BANK_SIZE: usize = 8 * 1024;
@@ -61,6 +63,10 @@ impl NameTable {
 		let addr = self.tanslate_addr(addr);
 		self.name_table.write_u8(addr, val);
 	}
+
+	fn set_mirror_mode(&mut self, mode: MirroMode) {
+		self.mode = mode
+	}
 }
 
 
@@ -121,7 +127,7 @@ impl Mapper for NRom {
 
 // mapper 2
 #[derive(Debug)]
-pub struct UNRom {
+pub struct UxRom {
 
 	// CPU $8000-$BFFF: 16 KB switchable PRG ROM bank
 	// CPU $C000-$FFFF: 16 KB PRG ROM bank, fixed to the last bank
@@ -142,7 +148,7 @@ pub struct UNRom {
 }
 
 
-impl UNRom {
+impl UxRom {
 	pub fn new(prg: Memory, _chr: Memory, mode: MirroMode) -> Self {
 		let banks = prg.size() / PRG_BANK_SIZE;
 		Self {
@@ -156,7 +162,7 @@ impl UNRom {
 }
 
 
-impl Mapper for UNRom {
+impl Mapper for UxRom {
 
 	fn read_u8(&mut self, addr: u16) -> u8 {
 		match addr {
@@ -183,5 +189,210 @@ impl Mapper for UNRom {
 			}
 			_ => (),
 		}
+	}
+}
+
+
+// mapper 4
+#[derive(Debug)]
+pub struct MMC3 {
+	// prg rom
+	prg: Memory,
+	prg_banks: usize,
+	// ppu pattern table
+	chr: Memory,
+	// nametable
+	name_table: NameTable,
+	// register select
+	reg_select: u8,
+	// chr and prg bank selectors
+	regs: [u8; 8],
+	// prg inversion
+	prg_bank_mode: u8,
+	// chr A12 inversion
+	chr_inversion: bool,
+	// irq signal line
+	irq: Signal,
+	// irq functions
+	irq_reload_value: u8,
+	irq_counter: u8,
+	irq_enabled: bool,
+	irq_reload: bool,
+	prev_a12: u16,
+}
+
+
+impl MMC3 {
+	pub fn new(prg: Memory, chr: Memory, mode: MirroMode, irq: Signal) -> Self {
+		let banks = prg.size() / 8192;
+		Self {
+			prg: prg,
+			prg_banks: banks,
+			chr: chr,
+			name_table: NameTable::new(mode),
+			reg_select: 0,
+			regs: [0; 8],
+			prg_bank_mode: 0,
+			chr_inversion: false,
+			irq: irq,
+			irq_reload_value: 0,
+			irq_reload: false,
+			irq_counter: 0,
+			irq_enabled: false,
+			prev_a12: 0,
+		}
+	}
+}
+
+
+impl Mapper for MMC3 {
+
+	fn read_u8(&mut self, addr: u16) -> u8 {
+		//println!("read mapper {:#06x}", addr);
+		match addr {
+			// pattern_table
+			0x0000..=0x1fff => {
+				// irq A12 handle
+				let a12 = addr & 0x1000;
+				if self.prev_a12 == 0 && a12 != 0 {
+					// a12 low -> high
+					if self.irq_reload {
+						self.irq_counter = self.irq_reload_value;
+						self.irq_reload = false;
+					} else {
+						if self.irq_counter == 0 && self.irq_enabled {
+							self.irq_counter = self.irq_reload_value;
+							*self.irq.borrow_mut() = 1;
+							// println!("mmc3 irq counter {}", self.irq_counter);							
+						} else {
+							self.irq_counter -= 1;
+						}
+					}
+					// println!("mmc3 irq counter {}", self.irq_counter);
+				}
+				self.prev_a12 = a12;
+
+				let real_addr: usize = if !self.chr_inversion {
+					match addr {
+						// 0
+						0x0000..=0x07ff => (addr - 0x0000) as usize + ((self.regs[0] as usize) << 10),
+						0x0800..=0x0fff => (addr - 0x0800) as usize + ((self.regs[1] as usize) << 10),
+						// 1
+						0x1000..=0x13ff => (addr - 0x1000) as usize | ((self.regs[2] as usize) << 10),
+						0x1400..=0x17ff => (addr - 0x1400) as usize | ((self.regs[3] as usize) << 10),
+						0x1800..=0x1bff => (addr - 0x1800) as usize | ((self.regs[4] as usize) << 10),
+						0x1c00..=0x1fff => (addr - 0x1c00) as usize | ((self.regs[5] as usize) << 10),
+						_ => panic!("bad mmc3 addr {:#06x}", addr),
+					}
+				} else {
+					match addr {
+						// 0
+						0x0000..=0x03ff => (addr - 0x0000) as usize | ((self.regs[2] as usize) << 10),
+						0x0400..=0x07ff => (addr - 0x0400) as usize | ((self.regs[3] as usize) << 10),
+						0x0800..=0x0bff => (addr - 0x0800) as usize | ((self.regs[4] as usize) << 10),
+						0x0c00..=0x0fff => (addr - 0x0c00) as usize | ((self.regs[5] as usize) << 10),
+						// 1
+						0x1000..=0x17ff => (addr - 0x1000) as usize + ((self.regs[0] as usize) << 10),
+						0x1800..=0x1fff => (addr - 0x1800) as usize + ((self.regs[1] as usize) << 10),
+						_ => panic!("bad mmc3 addr {:#06x}", addr),
+					}
+				};
+				self.chr[real_addr]
+			},
+			0x2000..=0x3eff => self.name_table.read_u8(addr - 0x2000),
+			0x8000..=0xffff => {
+				let real_addr: usize = if self.prg_bank_mode == 0 {
+					match addr {
+						// 0
+						0x8000..=0x9fff => (addr - 0x8000) as usize | ((self.regs[6] as usize) << 13),
+						0xa000..=0xbfff => (addr - 0xa000) as usize | ((self.regs[7] as usize) << 13),
+						// 1
+						0xc000..=0xdfff => (addr - 0xc000) as usize | ((self.prg_banks - 2) << 13),
+						0xe000..=0xffff => (addr - 0xe000) as usize | ((self.prg_banks - 1) << 13),
+						_ => panic!("bad mmc3 addr {:#06x}", addr),
+					}
+				} else {
+					match addr {
+						// 0
+						0x8000..=0x9fff => (addr - 0x8000) as usize | ((self.prg_banks - 2) << 13),
+						0xa000..=0xbfff => (addr - 0xa000) as usize | ((self.regs[7] as usize) << 13),
+						// 1
+						0xc000..=0xdfff => (addr - 0xc000) as usize | ((self.regs[6] as usize) << 13),
+						0xe000..=0xffff => (addr - 0xe000) as usize | ((self.prg_banks - 1) << 13),
+						_ => panic!("bad mmc3 addr {:#06x}", addr),
+					}
+				};
+				self.prg[real_addr]
+			},
+			_ => 0,
+		}
+	}
+
+	fn write_u8(&mut self, addr: u16, val: u8) {
+		// println!("write mapper {:#06x} {:#04x}", addr, val);
+
+		match addr {
+			0x0000..=0x1fff => (),
+			0x2000..=0x3eff => self.name_table.write_u8(addr - 0x2000, val),
+			_ => {
+				let even = addr % 2 == 0;
+				if even {
+					match addr {
+						// Bank select ($8000-$9FFE, even)
+						0x8000..=0x9ffe => {
+							self.reg_select = val & 0x07;
+							self.prg_bank_mode = (val & 0x40) >> 6;
+							self.chr_inversion = (val & 0x80) != 0; 
+						},
+						// Mirroring ($A000-$BFFE, even)
+						0xa000..=0xbffe => {
+							let mirror_mode = match val & 0x01 {
+								0 => MirroMode::Vertical,
+								_ => MirroMode::Horizontal,
+							};
+							self.name_table.set_mirror_mode(mirror_mode);
+						},
+						// IRQ latch ($C000-$DFFE, even)
+						0xc000..=0xdffe => {
+							self.irq_reload_value = val;
+						}
+						// IRQ disable ($E000-$FFFE, even)
+						0xe000..=0xfffe => {
+							self.irq_enabled = false;
+						},
+						_ => (),
+					}
+				} else {
+					match addr {
+						// Bank data ($8001-$9FFF, odd)
+						0x8001..=0x9fff => {
+							// R6 and R7 will ignore the top two bits
+							// R0 and R1 ignore the bottom bit
+							let val = match self.reg_select {
+								6 | 7 => val & 0x3f,
+								0 | 1 => val & 0xfe,
+								_ => val,
+							};
+							self.regs[self.reg_select as usize] = val;
+							println!("mmc3 regs {:?}", self.regs);
+						},
+						// PRG RAM protect ($A001-$BFFF, odd)
+						0xa001..=0xbfff => {
+							// do nothing for now
+						},
+						// IRQ reload ($C001-$DFFF, odd)
+						0xc001..=0xdfff => {
+							self.irq_counter = 0;
+							self.irq_reload = true;
+						},
+						// IRQ enable ($E001-$FFFF, odd)
+						0xe001..=0xffff => {
+							self.irq_enabled = true;
+						},
+						_ => (),
+					}
+				}
+			}
+		}	
 	}
 }

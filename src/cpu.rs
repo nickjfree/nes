@@ -86,7 +86,6 @@ impl CPUBus {
 
     // load address
     pub fn read_u8(&self, addr: u16) -> u8 {
-
         match addr {
             // internal_ram
             0x0000..=0x1fff => {
@@ -136,7 +135,7 @@ impl CPUBus {
             0x8000..=0xffff => {
                 self.mapper.borrow_mut().read_u8(addr)
             },
-             _ => 0,
+            _ => 0,
         }
     }
 
@@ -173,6 +172,7 @@ impl CPUBus {
             },
             // apu registers
             0x4000..=0x4013 => {
+                // println!("cpu write addr {:#06x} {:#04x}", addr, data);
                 if let Some(mem) = &mut self.apu {
                     mem[usize::from(addr-0x4000)] = data
                 }
@@ -246,12 +246,14 @@ pub struct CPU {
     bus: CPUBus,
     // nmi signal
     nmi: Signal,
+    // irq signal
+    irq: Signal,
 }
 
 
 impl CPU {
     // new cpu
-    pub fn new(ppu: Rc<RefCell<PPU>>, mapper: Rc<RefCell<Box<dyn Mapper>>>, controller: Rc<RefCell<Controller>>, nmi: Signal) -> Self {
+    pub fn new(ppu: Rc<RefCell<PPU>>, mapper: Rc<RefCell<Box<dyn Mapper>>>, controller: Rc<RefCell<Controller>>, nmi: Signal, irq: Signal) -> Self {
 
         let mut cpu = Self {
             regs: Registers::default(),
@@ -266,6 +268,7 @@ impl CPU {
             is_immediate: false,
             bus: CPUBus::new(ppu, mapper, controller),
             nmi: nmi,
+            irq: irq,
         };
         cpu.init_tables();
         cpu        
@@ -490,6 +493,7 @@ impl CPU {
 
     fn ldy(&mut self) {
         self.regs.y = self.op_val();
+        //println!("ldy {:#06x}", self.op_addr);
         self.flag_nz(self.regs.y);
     }
 
@@ -878,12 +882,15 @@ impl CPU {
     }
 
     fn jsr(&mut self) {
+        //println!("jsr {}", self.regs);
         self.push_u16(self.regs.pc.wrapping_sub(1));
         self.regs.pc = self.op_addr;
     }
 
     fn rts(&mut self) {
+       // println!("rts  {}", self.regs);
         self.regs.pc = self.pop_u16().wrapping_add(1);
+       // println!("rts over {}", self.regs);
     }
 
     // interupts
@@ -893,7 +900,7 @@ impl CPU {
         let status = self.regs.status | STATUS_INTERUPT | STATUS_B1;
         self.push_u16(self.regs.pc);
         self.push_u8(status);
-        //println!("before nmi {}", self.regs);
+        // println!("before nmi {}", self.regs);
         self.regs.pc = self.bus.read_u16(0xfffa);
         //println!("after nmi {}", self.regs);
         self.cycles_delay += 7;
@@ -901,11 +908,13 @@ impl CPU {
 
     fn irq(&mut self) {
         // set I flag
+        //println!("before irq {}", self.regs);
         let status = self.regs.status | STATUS_INTERUPT | STATUS_B1;
         self.push_u16(self.regs.pc);
         self.push_u8(status);
-        self.regs.pc = self.bus.read_u16(0xfffc);
+        self.regs.pc = self.bus.read_u16(0xfffe);
         self.regs.status |= STATUS_INTERUPT;
+        //println!("after irq {}", self.regs);
         self.cycles_delay += 7;
     }
 
@@ -922,9 +931,9 @@ impl CPU {
 
     fn rti(&mut self) {
         self.regs.status = self.pop_u8() & !STATUS_B1 & !STATUS_B2;
-        // println!("before rti {}", self.regs);
+        //println!("before rti {}", self.regs);
         self.regs.pc = self.pop_u16();
-        // println!("after rti {}", self.regs);
+        //println!("after rti {}", self.regs);
     }
 
     // others
@@ -947,19 +956,35 @@ impl CPU {
 
     }
 
-    fn handle_interupt(&mut self) -> bool {
-        // check nmi
-        let has_nmi = {
-            let mut nmi = self.nmi.borrow_mut();
-            match *nmi {
-                0 => false,
-                _ => { *nmi = 0; true},
-            }
-        };
-        if has_nmi {
-            self.nmi();
+    fn poll_interupt(&self, sig: &Signal) -> bool {
+    
+        let mut sig = sig.borrow_mut();
+        match *sig {
+            0 => false,
+            _ => { 
+                *sig = 0;
+                true
+            },
         }
-        has_nmi
+    }
+
+    fn handle_interupt(&mut self) -> bool {
+        // check nmi irq
+        let nmi = self.poll_interupt(&self.nmi);
+        let irq = self.poll_interupt(&self.irq);
+        let interupt_disabled = self.regs.status & STATUS_INTERUPT != 0;
+
+        match (nmi, irq) {
+            (true, _) => {
+                self.nmi();
+                true
+            },
+            (false, true) if !interupt_disabled => {
+                self.irq();
+                true
+            },
+            _ => false
+        }
     }
 
     // status
@@ -996,7 +1021,10 @@ impl CPU {
                 // clear addressing mode
                 self.addressing_none();
                 // debug
-                // println!("opcode: {:#02x} regs: {} ", self.opcode, self.regs);
+                // println!("opcode: {:#04x} regs: {} ", self.opcode, self.regs);
+                // if self.regs.pc <= 0x8000 {
+                //     panic!("bad prg address: {:#04x} regs: {} ", self.opcode, self.regs);
+                // }
                 match self.opcode { 
                     0x00 => { self.implied();       self.brk();      },
                     0x01 => { self.indirect_x();    self.ora();      },
@@ -1181,7 +1209,7 @@ impl CPU {
                     self.cycles_delay += self.timing_table_cross[self.opcode as usize];
                 }
             } else {
-                // no interupt to handle
+                // interupt handled
             }
         }
         // count cycle

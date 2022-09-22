@@ -343,6 +343,9 @@ impl RenderStatus {
 
     // advance cycle
     fn inc_cycle(&mut self) -> bool {
+        // if self.scanline == 62 {
+        //     println!("line {} {}", self.scanline, self.cycle);
+        // }
         self.cycle += 1;
         if self.cycle > 340 {
             self.cycle = 0;
@@ -610,7 +613,7 @@ impl PPU {
             },
             // write vram addr
             PPUADDR => {
-                // println!("PPU: write {:#06x} {:#06x} {:?}", addr, val, self.regs);
+                //println!("PPU: write {:#06x} {:#06x} {:?}", addr, val, self.regs);
                 let val = val as u16;
                 match self.regs.w {
                    
@@ -644,7 +647,7 @@ impl PPU {
     }
 
     pub fn oam_dma(&mut self, data: &[u8]) {
-
+        // println!("oam dma");
         let mut oam_addr: u8 = self.regs.oam_addr;
         data.iter().for_each(|x| {
             let n: usize = usize::from((oam_addr >> 2) & 0x3f);
@@ -973,7 +976,6 @@ impl PPU {
         self.update_nmi();
         match self.rs.inc_cycle() {
             true => {
-                //println!("{:?}", (self.rs.scanline, self.rs.cycle));
                 1
             },
             _ => 0,

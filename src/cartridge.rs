@@ -5,8 +5,8 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use std::fmt;
 use byteorder::ReadBytesExt;
-use crate::board::Memory;
-use crate::mapper::{MirroMode, Mapper, NRom, UNRom, PRG_BANK_SIZE, CHR_BANK_SIZE};
+use crate::board::{ Memory, Signal };
+use crate::mapper::{MirroMode, Mapper, NRom, UxRom, MMC3, PRG_BANK_SIZE, CHR_BANK_SIZE};
 
 
 // cartridge header
@@ -71,7 +71,7 @@ impl Cartridge {
 
 
     // load cartridge data from reader
-    fn read<T: ReadBytesExt>(reader: &mut T) -> Result<Self, Box<dyn Error>> {
+    fn read<T: ReadBytesExt>(reader: &mut T, irq: Signal) -> Result<Self, Box<dyn Error>> {
 
         let mut cartridge = Cartridge::default();
         let header = CartridgeHeader::read(reader)?;
@@ -98,7 +98,8 @@ impl Cartridge {
 
         let mapper: Box<dyn Mapper> = match mapper_number {
             0 => Box::new(NRom::new(prg, chr, mirror_mode)),
-            2 => Box::new(UNRom::new(prg, chr, mirror_mode)),
+            2 => Box::new(UxRom::new(prg, chr, mirror_mode)),
+            4 => Box::new(MMC3::new(prg, chr, mirror_mode, irq)),
             _ => panic!("unsupported mapper {}", mapper_number),
         };
         cartridge.mapper = Some(mapper);
@@ -106,9 +107,9 @@ impl Cartridge {
     }
 
     // load cartridge from nes file
-    pub fn load(file: &str) -> Result<Cartridge, Box<dyn Error>> {
+    pub fn load(file: &str, irq: Signal) -> Result<Cartridge, Box<dyn Error>> {
         let mut file = File::open(file)?;
-        let cartridge = Cartridge::read(&mut file)?;
+        let cartridge = Cartridge::read(&mut file, irq)?;
         Ok(cartridge)
     }
 
