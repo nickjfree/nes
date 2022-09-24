@@ -53,13 +53,11 @@ impl NameTable {
 impl NameTable {
 
 	fn read_u8(&mut self, addr: u16) -> u8 {
-		//println!("read nt {:#06x}", addr);
 		let addr = self.tanslate_addr(addr);
 		self.name_table.read_u8(addr)
 	}
 
 	fn write_u8(&mut self, addr: u16, val: u8) {
-		//println!("write nt {:#06x}", addr);
 		let addr = self.tanslate_addr(addr);
 		self.name_table.write_u8(addr, val);
 	}
@@ -217,7 +215,6 @@ pub struct MMC3 {
 	irq_reload_value: u8,
 	irq_counter: u8,
 	irq_enabled: bool,
-	irq_reload: bool,
 	prev_a12: u16,
 }
 
@@ -236,7 +233,6 @@ impl MMC3 {
 			chr_inversion: false,
 			irq: irq,
 			irq_reload_value: 0,
-			irq_reload: false,
 			irq_counter: 0,
 			irq_enabled: false,
 			prev_a12: 0,
@@ -248,7 +244,6 @@ impl MMC3 {
 impl Mapper for MMC3 {
 
 	fn read_u8(&mut self, addr: u16) -> u8 {
-		//println!("read mapper {:#06x}", addr);
 		match addr {
 			// pattern_table
 			0x0000..=0x1fff => {
@@ -256,19 +251,16 @@ impl Mapper for MMC3 {
 				let a12 = addr & 0x1000;
 				if self.prev_a12 == 0 && a12 != 0 {
 					// a12 low -> high
-					if self.irq_reload {
-						self.irq_counter = self.irq_reload_value;
-						self.irq_reload = false;
-					} else {
-						if self.irq_counter == 0 && self.irq_enabled {
-							self.irq_counter = self.irq_reload_value;
-							*self.irq.borrow_mut() = 1;
-							// println!("mmc3 irq counter {}", self.irq_counter);							
-						} else {
+					match self.irq_counter {
+						0 => self.irq_counter = self.irq_reload_value,
+						_ => {
 							self.irq_counter -= 1;
-						}
+							if self.irq_counter == 0 && self.irq_enabled {
+								*self.irq.borrow_mut() = 1;
+								// println!("------mmc3 irq ({})------------", self.irq_reload_value);
+							}
+						},
 					}
-					// println!("mmc3 irq counter {}", self.irq_counter);
 				}
 				self.prev_a12 = a12;
 
@@ -278,19 +270,19 @@ impl Mapper for MMC3 {
 						0x0000..=0x07ff => (addr - 0x0000) as usize + ((self.regs[0] as usize) << 10),
 						0x0800..=0x0fff => (addr - 0x0800) as usize + ((self.regs[1] as usize) << 10),
 						// 1
-						0x1000..=0x13ff => (addr - 0x1000) as usize | ((self.regs[2] as usize) << 10),
-						0x1400..=0x17ff => (addr - 0x1400) as usize | ((self.regs[3] as usize) << 10),
-						0x1800..=0x1bff => (addr - 0x1800) as usize | ((self.regs[4] as usize) << 10),
-						0x1c00..=0x1fff => (addr - 0x1c00) as usize | ((self.regs[5] as usize) << 10),
+						0x1000..=0x13ff => (addr - 0x1000) as usize + ((self.regs[2] as usize) << 10),
+						0x1400..=0x17ff => (addr - 0x1400) as usize + ((self.regs[3] as usize) << 10),
+						0x1800..=0x1bff => (addr - 0x1800) as usize + ((self.regs[4] as usize) << 10),
+						0x1c00..=0x1fff => (addr - 0x1c00) as usize + ((self.regs[5] as usize) << 10),
 						_ => panic!("bad mmc3 addr {:#06x}", addr),
 					}
 				} else {
 					match addr {
 						// 0
-						0x0000..=0x03ff => (addr - 0x0000) as usize | ((self.regs[2] as usize) << 10),
-						0x0400..=0x07ff => (addr - 0x0400) as usize | ((self.regs[3] as usize) << 10),
-						0x0800..=0x0bff => (addr - 0x0800) as usize | ((self.regs[4] as usize) << 10),
-						0x0c00..=0x0fff => (addr - 0x0c00) as usize | ((self.regs[5] as usize) << 10),
+						0x0000..=0x03ff => (addr - 0x0000) as usize + ((self.regs[2] as usize) << 10),
+						0x0400..=0x07ff => (addr - 0x0400) as usize + ((self.regs[3] as usize) << 10),
+						0x0800..=0x0bff => (addr - 0x0800) as usize + ((self.regs[4] as usize) << 10),
+						0x0c00..=0x0fff => (addr - 0x0c00) as usize + ((self.regs[5] as usize) << 10),
 						// 1
 						0x1000..=0x17ff => (addr - 0x1000) as usize + ((self.regs[0] as usize) << 10),
 						0x1800..=0x1fff => (addr - 0x1800) as usize + ((self.regs[1] as usize) << 10),
@@ -304,21 +296,21 @@ impl Mapper for MMC3 {
 				let real_addr: usize = if self.prg_bank_mode == 0 {
 					match addr {
 						// 0
-						0x8000..=0x9fff => (addr - 0x8000) as usize | ((self.regs[6] as usize) << 13),
-						0xa000..=0xbfff => (addr - 0xa000) as usize | ((self.regs[7] as usize) << 13),
+						0x8000..=0x9fff => (addr - 0x8000) as usize + ((self.regs[6] as usize) << 13),
+						0xa000..=0xbfff => (addr - 0xa000) as usize + ((self.regs[7] as usize) << 13),
 						// 1
-						0xc000..=0xdfff => (addr - 0xc000) as usize | ((self.prg_banks - 2) << 13),
-						0xe000..=0xffff => (addr - 0xe000) as usize | ((self.prg_banks - 1) << 13),
+						0xc000..=0xdfff => (addr - 0xc000) as usize + ((self.prg_banks - 2) << 13),
+						0xe000..=0xffff => (addr - 0xe000) as usize + ((self.prg_banks - 1) << 13),
 						_ => panic!("bad mmc3 addr {:#06x}", addr),
 					}
 				} else {
 					match addr {
 						// 0
-						0x8000..=0x9fff => (addr - 0x8000) as usize | ((self.prg_banks - 2) << 13),
-						0xa000..=0xbfff => (addr - 0xa000) as usize | ((self.regs[7] as usize) << 13),
+						0x8000..=0x9fff => (addr - 0x8000) as usize + ((self.prg_banks - 2) << 13),
+						0xa000..=0xbfff => (addr - 0xa000) as usize + ((self.regs[7] as usize) << 13),
 						// 1
-						0xc000..=0xdfff => (addr - 0xc000) as usize | ((self.regs[6] as usize) << 13),
-						0xe000..=0xffff => (addr - 0xe000) as usize | ((self.prg_banks - 1) << 13),
+						0xc000..=0xdfff => (addr - 0xc000) as usize + ((self.regs[6] as usize) << 13),
+						0xe000..=0xffff => (addr - 0xe000) as usize + ((self.prg_banks - 1) << 13),
 						_ => panic!("bad mmc3 addr {:#06x}", addr),
 					}
 				};
@@ -329,8 +321,7 @@ impl Mapper for MMC3 {
 	}
 
 	fn write_u8(&mut self, addr: u16, val: u8) {
-		// println!("write mapper {:#06x} {:#04x}", addr, val);
-
+		// println!("mapper write{:#06x} {:#04x}", addr, val);
 		match addr {
 			0x0000..=0x1fff => (),
 			0x2000..=0x3eff => self.name_table.write_u8(addr - 0x2000, val),
@@ -355,6 +346,7 @@ impl Mapper for MMC3 {
 						// IRQ latch ($C000-$DFFE, even)
 						0xc000..=0xdffe => {
 							self.irq_reload_value = val;
+							self.irq_counter = 0;
 						}
 						// IRQ disable ($E000-$FFFE, even)
 						0xe000..=0xfffe => {
@@ -374,7 +366,6 @@ impl Mapper for MMC3 {
 								_ => val,
 							};
 							self.regs[self.reg_select as usize] = val;
-							println!("mmc3 regs {:?}", self.regs);
 						},
 						// PRG RAM protect ($A001-$BFFF, odd)
 						0xa001..=0xbfff => {
@@ -383,7 +374,6 @@ impl Mapper for MMC3 {
 						// IRQ reload ($C001-$DFFF, odd)
 						0xc001..=0xdfff => {
 							self.irq_counter = 0;
-							self.irq_reload = true;
 						},
 						// IRQ enable ($E001-$FFFF, odd)
 						0xe001..=0xffff => {

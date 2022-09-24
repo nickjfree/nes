@@ -724,7 +724,7 @@ impl CPU {
 
     fn rora(&mut self) {
         let old = (self.regs.status & STATUS_CARRAY) << 7;
-        match self.regs.acc & 0x81  {
+        match self.regs.acc & 0x01  {
             0 => self.regs.status &= !STATUS_CARRAY,
             _ => self.regs.status |= STATUS_CARRAY,
         }
@@ -888,52 +888,45 @@ impl CPU {
     }
 
     fn rts(&mut self) {
-       // println!("rts  {}", self.regs);
         self.regs.pc = self.pop_u16().wrapping_add(1);
-       // println!("rts over {}", self.regs);
     }
 
     // interupts
 
     fn nmi(&mut self) {
-        // set I flag
-        let status = self.regs.status | STATUS_INTERUPT | STATUS_B1;
+        // set B flag
+        let status = self.regs.status | STATUS_B1;
         self.push_u16(self.regs.pc);
         self.push_u8(status);
-        // println!("before nmi {}", self.regs);
         self.regs.pc = self.bus.read_u16(0xfffa);
-        //println!("after nmi {}", self.regs);
+        self.regs.status |= STATUS_INTERUPT;
         self.cycles_delay += 7;
     }
 
     fn irq(&mut self) {
-        // set I flag
-        //println!("before irq {}", self.regs);
-        let status = self.regs.status | STATUS_INTERUPT | STATUS_B1;
+        // set B flag
+        let status = self.regs.status | STATUS_B1;
         self.push_u16(self.regs.pc);
         self.push_u8(status);
         self.regs.pc = self.bus.read_u16(0xfffe);
         self.regs.status |= STATUS_INTERUPT;
-        //println!("after irq {}", self.regs);
         self.cycles_delay += 7;
     }
 
     fn brk(&mut self) {
         // read next instruction byte (and throw it away)
         self.fetch_u8();
-        // set I flag
-        let status = self.regs.status | STATUS_INTERUPT | STATUS_B1 | STATUS_B2;
+        // set B flag
+        let status = self.regs.status | STATUS_B1 | STATUS_B2;
         self.push_u16(self.regs.pc);
         self.push_u8(status);
-        // println!("before brk {}", self.regs);
+        self.regs.status |= STATUS_INTERUPT;
         self.regs.pc = self.bus.read_u16(0xfffe);
     }
 
     fn rti(&mut self) {
         self.regs.status = self.pop_u8() & !STATUS_B1 & !STATUS_B2;
-        //println!("before rti {}", self.regs);
         self.regs.pc = self.pop_u16();
-        //println!("after rti {}", self.regs);
     }
 
     // others
@@ -992,7 +985,7 @@ impl CPU {
         self.regs.acc = 0;
         self.regs.x = 0;
         self.regs.y = 0;
-        self.regs.status |= STATUS_INTERUPT | STATUS_B1 | STATUS_B2;
+        self.regs.status |= STATUS_INTERUPT;
         self.regs.sp = 0xfd;
         self.regs.pc = self.bus.read_u16(0xfffc);
     }
@@ -1000,7 +993,7 @@ impl CPU {
     pub fn reset(&mut self) {
         // reset interupt. but write is diabled
         self.regs.sp = self.regs.sp.wrapping_sub(3);
-        self.regs.status |= STATUS_INTERUPT;
+        self.regs.status |= STATUS_INTERUPT | STATUS_B1 | STATUS_B2;
         self.regs.pc = self.bus.read_u16(0xfffc);
     }
 

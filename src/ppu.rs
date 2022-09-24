@@ -110,7 +110,8 @@ impl DerefMut for OAM {
     }
 }
 
-#[derive(Default, Copy, Clone)]
+
+#[derive(Default, Copy, Clone, Debug)]
 struct FetchedSprite {
     data: u32,
     sprite: [u8; 4],
@@ -124,16 +125,17 @@ impl FetchedSprite {
     fn default() -> Self {
         Self {
             data: 0,
-            sprite: [0, 255, 0, 0],
+            sprite: [255, 255, 255, 255],
             row: 0,
-            sprite_index: 255,
+            sprite_index: 0,
             dummy: true,
         }
     }
 
     fn fetch(&self, cycle: u16) -> u8 {
         let d = cycle.wrapping_sub(self.x() as u16);
-        if d < 8 {
+        if !self.dummy && d < 8 {
+            //1
             ((self.data >> ((7 - d) * 4)) & 0x0f) as u8
         } else {
             0
@@ -350,6 +352,7 @@ impl RenderStatus {
         if self.cycle > 340 {
             self.cycle = 0;
             self.scanline += 1;
+            // println!("line {} {}", self.scanline, self.cycle);
             if self.scanline > 261 {
                 self.scanline = 0;
                 self.frame_number = self.frame_number.wrapping_add(1);
@@ -525,7 +528,7 @@ impl PPU {
 
     // write ppu registers
     pub fn write_u8(&mut self, addr: u16, val: u8) {
-        // println!("PPU: write {:#02x} {:#02x} {:?}", addr, val, self.regs);
+        // println!("PPU: write {:#02x} {:#02x} {:?}", addr, val, (self.rs.scanline, self.rs.cycle));
         self.regs.bus_data = val;
         match addr {
             // write ppu ctrl
@@ -590,7 +593,6 @@ impl PPU {
             },
             // write ppu scroll
             PPUSCROLL => {   
-                // println!("PPU: write {:#02x} {:#02x} {:?}", addr, val, self.rs.scanline);
                 let val = val as u16;
                 match self.regs.w {
                     0 => {
@@ -613,7 +615,6 @@ impl PPU {
             },
             // write vram addr
             PPUADDR => {
-                //println!("PPU: write {:#06x} {:#06x} {:?}", addr, val, self.regs);
                 let val = val as u16;
                 match self.regs.w {
                    
@@ -655,6 +656,11 @@ impl PPU {
             self.oam[n][m] = *x;
             oam_addr = oam_addr.wrapping_add(1);
         });
+        // log sprite
+        // for sp in self.oam.iter() {
+        //     print!("{:?} ", sp)
+        // }
+        // println!("");
     }
 
     pub fn reset(&mut self) {
@@ -778,6 +784,10 @@ impl PPU {
     }
 
     fn sprite_evaluation(&mut self) {
+        if self.rs.scanline == 261 {
+            // skip prerender line
+            return;
+        }
         // clear secondary_oam oam
         for sp in self.sprite_cache.iter_mut() {
             *sp = FetchedSprite::default();
@@ -802,21 +812,22 @@ impl PPU {
                 }
             }
             count += 1;
-            if count > 8 {
-                if self.rs.sprite_overflow == false {
-                    // println!("overflow at {:?}", self.rs);
-                }
+            if count >= 8 {
+                // if self.rs.sprite_overflow == false {
+                   // println!("overflow at {:?}", self.rs.scanline);
+                // }
                self.rs.sprite_overflow = true;
                break
             }
         }
+        // println!("line {}", self.rs.scanline);
     }
 
-    fn get_sprite_color(&self) -> (u8, bool, u8) {
+    fn get_sprite_color(&self) -> (u8, bool, u8) {        
         let cycle = self.rs.cycle - 1;
-        if self.rs.scanline == 0 {
+        if !self.rs.show_sprite || self.rs.scanline == 0 {
            return (0, false, 0);
-        } 
+        }
         for i in 0..8 {
             let color = self.sprite_cache[i].fetch(cycle);
             if color & 0x03 != 0 {
@@ -827,6 +838,9 @@ impl PPU {
     }
 
     fn get_background_color(&self) -> u8 {
+        if !self.rs.show_background {
+           return 0;
+        }
         let bg = ((self.rs.tile_data >> (60 - self.regs.x * 4)) & 0x0f) as u8;
         if bg & 0x03 == 0 {
             0
@@ -857,6 +871,9 @@ impl PPU {
                             self.ppu_bus.read_u8(0x3f00 + bg_palette_index as u16)
                         },
                         (1..=3, 1..=3, false) => {
+                            // if maybe_zero_hit && !self.rs.sprite_0_hit {
+                            //     println!("0 hit at {}, {}", self.rs.scanline, self.rs.cycle);
+                            // }
                             self.rs.sprite_0_hit = self.rs.sprite_0_hit || maybe_zero_hit;
                             self.ppu_bus.read_u8(0x3f00 + bg_palette_index as u16)
                         }
@@ -864,6 +881,9 @@ impl PPU {
                             self.ppu_bus.read_u8(0x3f10 + sp_palette_index as u16)
                         },
                         (1..=3, 1..=3, true) => {
+                            // if maybe_zero_hit && !self.rs.sprite_0_hit {
+                            //     println!("0 hit at {}, {}", self.rs.scanline, self.rs.cycle);
+                            // }
                             self.rs.sprite_0_hit = self.rs.sprite_0_hit || maybe_zero_hit;
                             self.ppu_bus.read_u8(0x3f10 + sp_palette_index as u16)
                         }
@@ -879,7 +899,7 @@ impl PPU {
                 },
                 _ => (),
             }
-            // fetch logic
+            // background fetch logic
             match (scanline, cycle) {
                 (_, 0) => (),
                 (0..=239 | 261,  1..=256 | 321..=336) => {
@@ -903,9 +923,9 @@ impl PPU {
                 },
                 _ => (),
             }
-            // sprite
+            // sprite evalation & fetch logic
             match (scanline, cycle) {
-                (0..=239, 256) => {
+                (0..=239 | 261, 256) => {
                     // sprite_evaluation for the next line
                     self.sprite_evaluation();
                 },
@@ -914,8 +934,7 @@ impl PPU {
                     self.regs.oam_addr = 0;
                     let index = (((cycle - 1) >> 3) & 0x07) as usize;
                     match cycle % 8 {
-                        4 => { 
-                            self.fetch_at();
+                        4 => {
                             // the actual read finished at cycle 6, but address bus is set at cycle 4
                             // we read here, becuase some maapers depend on the address bus behavior. eg. MMC3 A12
                             self.fetch_sp_tile_low(index); 
@@ -965,6 +984,7 @@ impl PPU {
         if nmi_current && !self.nmi_prev {
             self.rs.nmi_frame = self.rs.frame_number;
             *self.nmi.borrow_mut() = 1;
+            // println!("-------------------------------nmi----------------------------------------");
         }
         self.nmi_prev = nmi_current;
     }

@@ -25,8 +25,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     let irq = Signal::default();
 
     // load cartridge data
-    let mapper = Cartridge::load("roms/Ninja Gaiden 3 - The Ancient Ship of Doom (U).nes", Rc::clone(&irq)).expect("load cartridge error").to_mapper();
-    // let mapper = Cartridge::load("../nes-test-roms/stress/NEStress.nes").expect("load cartridge error").to_mapper();
+    let mapper = Cartridge::load("roms/[182]  角色类 - 忍者龙剑传3.nes", Rc::clone(&irq)).expect("load cartridge error").to_mapper();
+    // let mapper = Cartridge::load("roms/nestest.nes", Rc::clone(&irq)).expect("load cartridge error").to_mapper();
+    // let mapper = Cartridge::load("../nes-test-roms/nes15-1.0.0/nes15-NTSC.nes", Rc::clone(&irq)).expect("load cartridge error").to_mapper();
     // controller
     let controller = Rc::new(RefCell::new(Controller::new()));
     // create ppu
