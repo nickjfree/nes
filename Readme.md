@@ -5,10 +5,12 @@ Make an nes emulator while learning Rust
 
 
 ## 
-![ninja]
-![doubledragon]
-![mario]
-![dk]
+
+|  |  |
+|---|---|
+|![ninja] | ![doubledragon] |
+| ![mario] | ![dk] |
+
 
 ## Run
 
