@@ -183,7 +183,7 @@ impl Mapper for UxRom {
 			0x0000..=0x1fff => self.chr.write_u8(addr, val),
 			0x2000..=0x3eff => self.name_table.write_u8(addr - 0x2000, val),
 			0x8000..=0xffff => {
-				self.select = val;
+				self.select = ((val as usize) % self.banks) as u8;
 			}
 			_ => (),
 		}
