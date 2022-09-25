@@ -345,14 +345,10 @@ impl RenderStatus {
 
     // advance cycle
     fn inc_cycle(&mut self) -> bool {
-        // if self.scanline == 62 {
-        //     println!("line {} {}", self.scanline, self.cycle);
-        // }
         self.cycle += 1;
         if self.cycle > 340 {
             self.cycle = 0;
             self.scanline += 1;
-            // println!("line {} {}", self.scanline, self.cycle);
             if self.scanline > 261 {
                 self.scanline = 0;
                 self.frame_number = self.frame_number.wrapping_add(1);
@@ -448,7 +444,6 @@ impl PPU {
 
     // read ppu registers
     pub fn read_u8(&mut self, addr: u16) -> u8 {
-        // println!("PPU: read {:#04x}", addr);
         match addr {
             // read ppu status
             //             7  bit  0
@@ -517,9 +512,7 @@ impl PPU {
                     },
                     _ => panic!("read vram address {:#02x}", self.regs.v),
                 }
-                // println!("before ppu_data {:?}, ret: {:#04x}, inc {:?}", self.regs, ret, self.vram_increment);
                 self.regs.v = self.regs.v.wrapping_add(self.vram_increment);
-                // println!("ppu_data {:?}, ret: {:#04x}, inc {:?}", self.regs, ret, self.vram_increment);
                 ret
             },
             _ => 0,
@@ -528,7 +521,6 @@ impl PPU {
 
     // write ppu registers
     pub fn write_u8(&mut self, addr: u16, val: u8) {
-        // println!("PPU: write {:#02x} {:#02x} {:?}", addr, val, (self.rs.scanline, self.rs.cycle));
         self.regs.bus_data = val;
         match addr {
             // write ppu ctrl
@@ -619,11 +611,11 @@ impl PPU {
                 match self.regs.w {
                    
                     0 => {
-                        // t: .CDEFGH ........ <- d: ..CDEFGH
-                        //        <unused>     <- d: AB......
-                        // t: Z...... ........ <- 0 (bit Z is cleared)
-                        // w:                  <- 1     
-                        self.regs.t = (self.regs.t & 0xc0ff) | ((val & 0x003f) << 8);
+                        // t: ..CDEFGH ........ <- d: ..CDEFGH
+                        //         <unused>     <- d: AB......
+                        // t: .Z...... ........ <- 0 (bit Z is cleared)
+                        // w:                   <- 1
+                        self.regs.t = (self.regs.t & 0x80ff) | ((val & 0x003f) << 8);
                         self.regs.w = 1;
                     },
                     1 => {
@@ -648,7 +640,6 @@ impl PPU {
     }
 
     pub fn oam_dma(&mut self, data: &[u8]) {
-        // println!("oam dma");
         let mut oam_addr: u8 = self.regs.oam_addr;
         data.iter().for_each(|x| {
             let n: usize = usize::from((oam_addr >> 2) & 0x3f);
@@ -656,11 +647,6 @@ impl PPU {
             self.oam[n][m] = *x;
             oam_addr = oam_addr.wrapping_add(1);
         });
-        // log sprite
-        // for sp in self.oam.iter() {
-        //     print!("{:?} ", sp)
-        // }
-        // println!("");
     }
 
     pub fn reset(&mut self) {
@@ -813,14 +799,10 @@ impl PPU {
             }
             count += 1;
             if count >= 8 {
-                // if self.rs.sprite_overflow == false {
-                   // println!("overflow at {:?}", self.rs.scanline);
-                // }
                self.rs.sprite_overflow = true;
                break
             }
         }
-        // println!("line {}", self.rs.scanline);
     }
 
     fn get_sprite_color(&self) -> (u8, bool, u8) {        
@@ -871,9 +853,6 @@ impl PPU {
                             self.ppu_bus.read_u8(0x3f00 + bg_palette_index as u16)
                         },
                         (1..=3, 1..=3, false) => {
-                            // if maybe_zero_hit && !self.rs.sprite_0_hit {
-                            //     println!("0 hit at {}, {}", self.rs.scanline, self.rs.cycle);
-                            // }
                             self.rs.sprite_0_hit = self.rs.sprite_0_hit || maybe_zero_hit;
                             self.ppu_bus.read_u8(0x3f00 + bg_palette_index as u16)
                         }
@@ -881,9 +860,6 @@ impl PPU {
                             self.ppu_bus.read_u8(0x3f10 + sp_palette_index as u16)
                         },
                         (1..=3, 1..=3, true) => {
-                            // if maybe_zero_hit && !self.rs.sprite_0_hit {
-                            //     println!("0 hit at {}, {}", self.rs.scanline, self.rs.cycle);
-                            // }
                             self.rs.sprite_0_hit = self.rs.sprite_0_hit || maybe_zero_hit;
                             self.ppu_bus.read_u8(0x3f10 + sp_palette_index as u16)
                         }
@@ -969,7 +945,6 @@ impl PPU {
                 self.rs.nmi_occurred_timer = 2;
             },
             (261, 1) => {
-                // println!("pre {:?}", self.rs);
                 self.nmi_occurred = false;
                 self.rs.sprite_overflow = false;
                 self.rs.sprite_0_hit = false;
@@ -984,7 +959,6 @@ impl PPU {
         if nmi_current && !self.nmi_prev {
             self.rs.nmi_frame = self.rs.frame_number;
             *self.nmi.borrow_mut() = 1;
-            // println!("-------------------------------nmi----------------------------------------");
         }
         self.nmi_prev = nmi_current;
     }

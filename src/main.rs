@@ -27,7 +27,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // load cartridge data
     let mapper = Cartridge::load("roms/[182]  角色类 - 忍者龙剑传3.nes", Rc::clone(&irq)).expect("load cartridge error").to_mapper();
     // let mapper = Cartridge::load("roms/nestest.nes", Rc::clone(&irq)).expect("load cartridge error").to_mapper();
-    // let mapper = Cartridge::load("../nes-test-roms/nes15-1.0.0/nes15-NTSC.nes", Rc::clone(&irq)).expect("load cartridge error").to_mapper();
+    // let mapper = Cartridge::load("../nes-test-roms/scrolltest/scroll.nes", Rc::clone(&irq)).expect("load cartridge error").to_mapper();
     // controller
     let controller = Rc::new(RefCell::new(Controller::new()));
     // create ppu
@@ -117,8 +117,6 @@ fn main() -> Result<(), Box<dyn Error>> {
             canvas.clear();
             canvas.copy(&texture, None, None)?;
             canvas.present();
-            // println!("{:?} {}", prev_time.elapsed().as_millis(), cycles);
-            // prev_time = Instant::now();
         }
         //::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 120));
     }

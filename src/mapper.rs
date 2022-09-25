@@ -42,7 +42,7 @@ impl NameTable {
 	fn tanslate_addr(&self, addr: u16) -> u16 {
 		match self.mode {
 			MirroMode::Single => addr & 0x03ff,
-			MirroMode::Horizontal => addr & 0x0bff,
+			MirroMode::Horizontal => (addr & 0x03ff) | ((addr & 0x0800) >> 1),
 			MirroMode::Vertical => addr & 0x07ff,
 			MirroMode::FourScreen => addr & 0x0fff,
 		}
@@ -257,7 +257,6 @@ impl Mapper for MMC3 {
 							self.irq_counter -= 1;
 							if self.irq_counter == 0 && self.irq_enabled {
 								*self.irq.borrow_mut() = 1;
-								// println!("------mmc3 irq ({})------------", self.irq_reload_value);
 							}
 						},
 					}
@@ -321,7 +320,6 @@ impl Mapper for MMC3 {
 	}
 
 	fn write_u8(&mut self, addr: u16, val: u8) {
-		// println!("mapper write{:#06x} {:#04x}", addr, val);
 		match addr {
 			0x0000..=0x1fff => (),
 			0x2000..=0x3eff => self.name_table.write_u8(addr - 0x2000, val),
@@ -333,7 +331,7 @@ impl Mapper for MMC3 {
 						0x8000..=0x9ffe => {
 							self.reg_select = val & 0x07;
 							self.prg_bank_mode = (val & 0x40) >> 6;
-							self.chr_inversion = (val & 0x80) != 0; 
+							self.chr_inversion = (val & 0x80) != 0;
 						},
 						// Mirroring ($A000-$BFFE, even)
 						0xa000..=0xbffe => {
@@ -346,7 +344,7 @@ impl Mapper for MMC3 {
 						// IRQ latch ($C000-$DFFE, even)
 						0xc000..=0xdffe => {
 							self.irq_reload_value = val;
-							self.irq_counter = 0;
+							// self.irq_counter = 0;
 						}
 						// IRQ disable ($E000-$FFFE, even)
 						0xe000..=0xfffe => {

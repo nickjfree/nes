@@ -172,7 +172,6 @@ impl CPUBus {
             },
             // apu registers
             0x4000..=0x4013 => {
-                // println!("cpu write addr {:#06x} {:#04x}", addr, data);
                 if let Some(mem) = &mut self.apu {
                     mem[usize::from(addr-0x4000)] = data
                 }
@@ -446,9 +445,6 @@ impl CPU {
         let base = self.regs.pc;
         self.op_addr = base.wrapping_add(rel);
         self.handle_cross_page(self.op_addr, base);
-        // if base == 0xe600 || base == 0xe4ff  {
-        //     println!("{:#06x} -> {:#06x} {}", base, self.op_addr, self.page_crossing);
-        // }
     }
 
     fn indirect(&mut self) {
@@ -493,7 +489,6 @@ impl CPU {
 
     fn ldy(&mut self) {
         self.regs.y = self.op_val();
-        //println!("ldy {:#06x}", self.op_addr);
         self.flag_nz(self.regs.y);
     }
 
@@ -882,7 +877,6 @@ impl CPU {
     }
 
     fn jsr(&mut self) {
-        //println!("jsr {}", self.regs);
         self.push_u16(self.regs.pc.wrapping_sub(1));
         self.regs.pc = self.op_addr;
     }
@@ -1014,10 +1008,6 @@ impl CPU {
                 // clear addressing mode
                 self.addressing_none();
                 // debug
-                // println!("opcode: {:#04x} regs: {} ", self.opcode, self.regs);
-                // if self.regs.pc <= 0x8000 {
-                //     panic!("bad prg address: {:#04x} regs: {} ", self.opcode, self.regs);
-                // }
                 match self.opcode { 
                     0x00 => { self.implied();       self.brk();      },
                     0x01 => { self.indirect_x();    self.ora();      },
